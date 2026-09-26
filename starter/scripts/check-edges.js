@@ -11,6 +11,7 @@ import { openDatabase } from '../server/db.js';
 import { createRouter } from '../server/router.js';
 import { registerRoutes } from '../server/routes/index.js';
 import { authenticate } from '../server/context.js';
+import { issueAccessToken } from '../server/auth.js';
 
 const DB = join(tmpdir(), 'remoteops-check-edges.db');
 const SECRET = 'test-secret';
@@ -354,6 +355,104 @@ console.log('\n== M5: device list query count does not grow ==');
   console.log(`   statements: ${two.n} for ${two.rows} devices, ${five.n} for ${five.rows} devices`);
   check('same statement count for 2 and 5 devices', [two.rows, five.rows, five.n === two.n], [2, 5, true]);
 }
+
+// ===========================================================================
+// M6 — sessions, audit completion, engine fixes. Fresh fixture again.
+await restart(8126);
+console.log('\n== M6: session start, the compound check ==');
+const dana6 = await tokOf('dana@example.test');
+let viewer6 = await tokOf('viewer@acme.test');
+const sam6 = await tokOf('sam@example.test');
+const start = (token, deviceId, mode) => call('POST', '/orgs/org_acme/sessions', { token, body: { deviceId, mode } });
+const sView = await start(viewer6, 'dev_lab_mac_01', 'view');
+check('viewer: view on lab-mac-01 -> 201', sView.status, 201);
+const qa = await start(viewer6, 'dev_qa_android_01', 'view');
+check('viewer: view on qa-android-01 -> 403 missing_permission', [qa.status, qa.body?.error?.reason], [403, 'missing_permission']);
+const ctl = await start(viewer6, 'dev_lab_mac_01', 'control');
+check('viewer: control on lab-mac-01 -> 403 missing_device_permission', [ctl.status, ctl.body?.error?.reason], [403, 'missing_device_permission']);
+check("mode 'shell' -> 400", (await start(viewer6, 'dev_lab_mac_01', 'shell')).status, 400);
+check('device in another org -> 404', (await start(dana6, 'dev_globex_desk_01', 'view')).status, 404);
+
+console.log('\n== M6: exclusivity ==');
+const held1 = await start(sam6, 'dev_lab_win_01', 'control');
+check('control -> 201', held1.status, 201);
+const busy = await start(dana6, 'dev_lab_win_01', 'control');
+check('2nd control -> 409 DEVICE_BUSY naming the holder',
+  [busy.status, busy.body?.error?.code, busy.body?.error?.message.includes(held1.body.id)], [409, 'DEVICE_BUSY', true]);
+check('view alongside -> 201', (await start(dana6, 'dev_lab_win_01', 'view')).status, 201);
+check('terminal while control is held -> 409', (await start(dana6, 'dev_lab_win_01', 'terminal')).status, 409);
+const pair = await Promise.all([1, 2].map(() => start(dana6, 'dev_qa_android_01', 'control')));
+check('two control starts in parallel -> one 201, one 409', pair.map((x) => x.status).sort(), [201, 409]);
+
+console.log('\n== M6: expiry releases the device ==');
+db.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), held1.body.id);
+const after = await start(dana6, 'dev_lab_win_01', 'control');
+check('expired holder: new control -> 201', after.status, 201);
+check('  ...old one ended, session_expired',
+  db.prepare('SELECT state, end_reason FROM sessions WHERE id = ?').get(held1.body.id), { state: 'ended', end_reason: 'session_expired' });
+
+console.log('\n== M6: authority snapshot and grandfathering ==');
+check("viewer's session snapshot names the grant", sView.body.authorized_by.grantIds, ['grt_viewer_start_session']);
+const ownerSnap = pair.find((x) => x.status === 201).body.authorized_by;
+check("owner's snapshot: role owner, no grants", [ownerSnap.role, ownerSnap.grantIds], ['owner', []]);
+check('revoke the grant -> 204', (await call('DELETE', '/orgs/org_acme/grants/grt_viewer_start_session', { token: dana6 })).status, 204);
+check('  ...the running session stays active',
+  db.prepare('SELECT state FROM sessions WHERE id = ?').get(sView.body.id).state, 'active');
+viewer6 = await tokOf('viewer@acme.test');
+check('  ...the next start -> 403', (await start(viewer6, 'dev_lab_mac_01', 'view')).status, 403);
+
+console.log('\n== M6: org TTL ==');
+check('PATCH maxSessionMinutes 5 -> 200',
+  (await call('PATCH', '/orgs/org_acme', { token: dana6, body: { maxSessionMinutes: 5 } })).status, 200);
+const short = (await start(dana6, 'dev_lab_mac_01', 'view')).body;
+const ttl = (Date.parse(short.expires_at) - Date.parse(short.started_at)) / 1000;
+check('  ...new session expires started_at + 5 min', Math.abs(ttl - 300) <= 2, true);
+
+console.log('\n== M6: GET /sessions/:id ==');
+check('participant reads own session -> 200', (await call('GET', `/sessions/${sView.body.id}`, { token: viewer6 })).status, 200);
+check('setup: org-wide deny session:view on Sam',
+  (await call('POST', '/orgs/org_acme/grants', { token: dana6, body: { userId: 'usr_sam', effect: 'deny', permissions: ['session:view'] } })).status, 201);
+const samNow = await tokOf('sam@example.test');
+check("Sam reads someone else's session -> 403", (await call('GET', `/sessions/${short.id}`, { token: samNow })).status, 403);
+db.prepare(`INSERT INTO sessions (id, org_id, user_id, device_id, mode, state, authorized_by, expires_at)
+            VALUES ('ses_gx_other', 'org_globex', 'usr_globex_owner', 'dev_globex_desk_01', 'view', 'active', '{}', ?)`)
+  .run(new Date(Date.now() + 36e5).toISOString());
+check('a session id from another org -> 404', (await call('GET', '/sessions/ses_gx_other', { token: dana6 })).status, 404);
+
+console.log('\n== M6: DELETE /sessions/:id ==');
+const stop = (id, token) => call('DELETE', `/sessions/${id}`, { token });
+const own = await stop(sView.body.id, viewer6);
+check('own -> 200 user_stopped', [own.status, own.body?.end_reason], [200, 'user_stopped']);
+check("someone else's without session:terminate -> 403", (await stop(short.id, samNow)).status, 403);
+const byAdmin = await stop(short.id, await tokOf('admin@acme.test'));
+check('admin -> 200 admin_terminated', [byAdmin.status, byAdmin.body?.end_reason], [200, 'admin_terminated']);
+check('again -> 409', (await stop(short.id, dana6)).status, 409);
+
+console.log('\n== M6: a suspended member is refused, and it is audited ==');
+check('suspend sam -> 200', (await call('POST', '/orgs/org_acme/members/usr_sam/suspend', { token: dana6 })).status, 200);
+// A token minted after the suspension (current pv), so freshness passes and suspension decides.
+const { perm_version: samPv } = db.prepare("SELECT perm_version FROM memberships WHERE org_id = 'org_acme' AND user_id = 'usr_sam'").get();
+const samSuspended = issueAccessToken({ userId: 'usr_sam', orgId: 'org_acme', role: 'operator', permVersion: samPv }, SECRET);
+const refused = await call('GET', '/orgs/org_acme/devices', { token: samSuspended });
+check('suspended, fresh token -> 403 suspended', [refused.status, refused.body?.error?.reason], [403, 'suspended']);
+const deny = db.prepare(
+  "SELECT action, reason_code FROM audit_events WHERE org_id = 'org_acme' AND actor_id = 'usr_sam' AND result = 'deny' AND reason_code = 'suspended'").get();
+check('  ...audit has the deny row', deny, { action: 'GET /v1/orgs/org_acme/devices', reason_code: 'suspended' });
+
+console.log('\n== M6 fix 1: a device-scoped org:delete row does not lift ==');
+db.prepare(`INSERT INTO grants (id, org_id, user_id, device_id, effect, created_by)
+            VALUES ('grt_bad_scope', 'org_acme', 'usr_acme_admin', 'dev_lab_mac_01', 'allow', 'usr_dana')`).run();
+db.prepare("INSERT INTO grant_permissions (grant_id, permission) VALUES ('grt_bad_scope', 'org:delete')").run();
+const eff = await call('GET', '/orgs/org_acme/users/usr_acme_admin/effective', { token: dana6 });
+check("admin's org-level org:delete stays deny", eff.body?.permissions?.['org:delete']?.effect, 'deny');
+
+console.log('\n== M6 fix 2: transfer target needs provision org-wide ==');
+const gxOwner = await tokOf('owner@globex.test');
+check('setup: dana gets device:provision on one Globex device',
+  (await call('POST', '/orgs/org_globex/grants', { token: gxOwner,
+    body: { userId: 'usr_dana', effect: 'allow', permissions: ['device:provision'], deviceId: 'dev_globex_desk_01' } })).status, 201);
+check('transfer into Globex -> 403',
+  (await call('POST', '/orgs/org_acme/devices/dev_lab_mac_01/transfer', { token: dana6, body: { toOrgId: 'org_globex' } })).status, 403);
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAILURES'} — ${pass} passed, ${fail} failed\n`);
 db.close();
