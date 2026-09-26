@@ -70,13 +70,47 @@ export function issueAccessToken({ userId, orgId, role, permVersion }, secret) {
 // AUTH-DATA-MODEL.md §10 lists the failure modes; §2 defines the claim set.
 // `node scripts/check-jwt.js` is the public test suite for this function.
 // ---------------------------------------------------------------------------
+const B64URL = /^[A-Za-z0-9_-]+$/;
+
+// Decode one base64url segment to a plain JSON object, or null. Buffer's decoder
+// silently skips invalid characters, so the alphabet is checked first.
+function decodeObject(seg) {
+  if (!B64URL.test(seg)) return null;
+  try {
+    const v = JSON.parse(unb64(seg).toString('utf8'));
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export function verifyAccessToken(token, secret) {
-  // YOURS TO WRITE. Every failure mode listed above must be a 401 UNAUTHENTICATED.
-  // `node scripts/check-jwt.js` is the public suite for this function.
-  throw Object.assign(
-    new Error('TODO: server/auth.js — verifyAccessToken() is yours to write (AUTH-DATA-MODEL.md §10).'),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+  if (typeof token !== 'string') throw unauthenticated('missing token');
+  const parts = token.split('.');
+  if (parts.length !== 3) throw unauthenticated('malformed token');
+  const [h, p, s] = parts;
+
+  // The header is read only to reject; key and algorithm are fixed here.
+  const header = decodeObject(h);
+  if (!header) throw unauthenticated('malformed token');
+  if (header.alg !== ALG || header.typ !== 'JWT') throw unauthenticated('unsupported token algorithm');
+
+  // Signature before claims. Comparing the canonical encodings also rejects
+  // non-canonical base64url spellings of the same bytes.
+  const expected = Buffer.from(b64(createHmac('sha256', secret).update(`${h}.${p}`).digest()));
+  const actual = Buffer.from(s);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+    throw unauthenticated('invalid token signature');
+  }
+
+  const claims = decodeObject(p);
+  if (!claims) throw unauthenticated('malformed token');
+  if (!Number.isFinite(claims.exp) || claims.exp <= Math.floor(Date.now() / 1000)) {
+    throw unauthenticated('token expired');
+  }
+  if (claims.iss !== ISS || claims.aud !== AUD) throw unauthenticated('token not issued for this api');
+  if (typeof claims.jti !== 'string' || claims.jti === '') throw unauthenticated('token has no id');
+  return claims;
 }
 
 
