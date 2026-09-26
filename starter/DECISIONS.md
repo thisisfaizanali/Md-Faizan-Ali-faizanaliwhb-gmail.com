@@ -109,6 +109,41 @@ suspension older than some bound should expire into a removal.
 
 ---
 
+### Accepting an invite for an existing account requires that account's password
+
+**What I chose:** `POST /invites/:token/accept` creates a user only when the email has none. If
+it does, `body.password` must verify against the stored hash — same `401` as a bad login
+otherwise — and the stored name and password are left alone (`server/routes/invites.js`,
+`525cc2c`).
+**Why:** accept returns an access token and sets the refresh cookie. For an existing user, that
+cookie opens every org they belong to. `check-edges.js` covers both paths: wrong password `401`,
+right password `200`, same user id, one `users` row.
+**What I rejected:** the literal "upsert the user" of AUTH-DATA-MODEL.md §6 on the token alone.
+Then an invite link sent to the wrong address, or forwarded, or leaked from a mail log, becomes a
+full login as that person. The invite is proof someone may join this org, not proof of who they
+are.
+**What would change my mind:** invite tokens delivered only to verified mailboxes, with accept
+issuing a session for the invited org only — not a refresh cookie for the whole account.
+
+---
+
+### A double invite is refused by the unique index, after retiring expired invites in the same transaction
+
+**What I chose:** invite creation first sets `revoked_at` on that (org, email)'s expired, unaccepted
+invite, then inserts. A live duplicate hits `one_live_invite_per_email`; `SQLITE_CONSTRAINT_UNIQUE`
+maps to `409` (`525cc2c`).
+**Why:** the index predicate ignores `expires_at` (BRIEF §2 and the schema agree on the columns),
+so without the retire step an expired invite blocks its email permanently — logged under
+Phase 3, covered by the expire-then-reinvite case in `check-edges.js`.
+**What I rejected:** checking for a live invite with a `SELECT` before inserting. With the index
+already there, a pre-check adds a race window and duplicates the rule. Also rejected: counting
+`expires_at` myself instead of revoking — the index would still see the old row as live.
+**What would change my mind:** being allowed to change the schema. Then the fix belongs in the
+predicate, not in a housekeeping `UPDATE` — though SQLite's partial indexes can't reference
+`now`, so it would still have to be a stored flag.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
@@ -180,6 +215,13 @@ cannot tell the difference between a decision and an oversight.
   except that an owner may modify another owner (`assertCanModify` in `server/lifecycle.js`).
   Without that exception, nobody could ever demote or remove an owner except the owner
   themselves.
+
+- **What stops a double accept.** BRIEF.md §2: "`one_live_invite_per_email` makes a double invite,
+  and a double accept, a database problem". AUTH-DATA-MODEL.md §6: "Two concurrent accepts of the
+  same token: exactly one wins. The partial unique index `one_live_invite_per_email` makes that a
+  database guarantee." The index is on `invites (org_id, email)`, and accepting never inserts an
+  invite, so it cannot see an accept at all. Built against the schema: one conditional `UPDATE`
+  with `changes === 1` decides the winner (`server/routes/invites.js`).
 
 ## Deliberately not built
 

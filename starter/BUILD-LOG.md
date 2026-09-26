@@ -200,6 +200,34 @@ to mean "not a role change" and skips role validation, then `UPDATE memberships 
 binds `undefined`. Checked better-sqlite3 directly: `SQLITE_CONSTRAINT_NOTNULL` → unhandled →
 `500`. `check-edges.js` (42/42) never sends a PATCH without a role. Fix and test to come.
 
+Fixed in `cadf008`: the handler calls `assertRoleExists` before `assertCanModify`. `{}` and
+`{role:'nope'}` both `400` now, and both are in `check-edges.js`.
+
+### 2026-09-26 · an expired invite blocks its email forever
+
+`one_live_invite_per_email` is `WHERE accepted_at IS NULL AND revoked_at IS NULL`. It says nothing
+about `expires_at`, so an invite that expired unaccepted still counts as live, and every later
+invite to that email would hit the index and `409`. The create handler retires that (org, email)'s
+expired invite in the same transaction as the insert (`525cc2c`). `check-edges.js`: expire an
+invite by hand, peek → `410`, re-invite the same email → `201`.
+
+### 2026-09-26 · the index doesn't stop a double accept
+
+The docs credit `one_live_invite_per_email` with making a double accept a database problem. It
+can't: accepting doesn't insert into `invites`. What makes one of two accepts lose is the
+conditional `UPDATE invites SET accepted_at ... WHERE accepted_at IS NULL AND ...` checked for
+`changes === 1`. `check-edges.js` fires two accepts with `Promise.all` and gets one `200`, one
+`409` — though with one connection the server runs them one after the other, so that test proves
+the conditional update, not true simultaneity.
+
+### 2026-09-26 · an invite link is not a login for an existing account
+
+"Upsert the user" on accept, read literally, means whoever holds an invite for an existing email
+is signed in as that person — in every org they belong to, not just this one. Accept now requires
+that account's password; a wrong one gets the same `401` body as a bad login, and the name and
+password on file are never overwritten. `check-edges.js`: wrong password `401`, right password
+`200` with the same user id and still one `users` row.
+
 ## Phase 4 — devices and grants
 
 _What happens at the boundary where two grants disagree, or where a grant's scope and the
