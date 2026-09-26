@@ -11,6 +11,25 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
+### Fix the shipped scripts in place, rather than work around them in my shell
+
+**What I chose:** patched the two broken lines the hand-out ships with — `db:reset`'s `rm -f`
+(`1a34541`) and `.pathname` → `fileURLToPath` in `scripts/load-db.js:11` and `server/index.js:23`
+(`8a591d3`) — and changed nothing else in `scripts/` or `server/`.
+**Why:** `npm run db:reset` failed with
+`ENOENT ... open 'C:\C:\Users\Sukuna\Web%20Development\...\db\schema.sql'`, and that one failure
+took `check-api.js` and the Playwright webServer down with it (logged under Phase 0). The
+`.pathname` half isn't Windows-only: `new URL('file:///home/a b/x.sql').pathname` is
+`/home/a%20b/x.sql`, so any checkout path with a space breaks on Linux too.
+**What I rejected:** developing from Git Bash or WSL. That fixes `rm -f` but not the ENOENT — the
+path is mangled inside Node, not by the shell — and it leaves the bug in the repo for the next
+person who clones it into `~/My Projects`. I also rejected `rimraf` for the delete: a
+dependency for something `fs.rmSync(f, { force: true })` does in one line.
+**What would change my mind:** being told the grading harness swaps in its own copy of
+`scripts/`. The fix would then be harmless but redundant, and I'd keep it only for local runs.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
@@ -58,6 +77,11 @@ one you found. For each: quote both statements, say which you built against, and
 Building against the written rule and arguing in writing is a **full-marks** answer. Silently
 working around it, or quietly picking one and saying nothing, scores zero on the section — we
 cannot tell the difference between a decision and an oversight.
+
+- **`playwright.config.js` vs `package.json`.** The config comment says "`npm test` builds the
+  SPA first", but `"test": "playwright test"` has no build step. The webServer runs with
+  `NODE_ENV=production`, so it serves `dist/`, which only exists after `npm run build`. I left
+  both files as they are and run `npm run build` before `npx playwright test` myself.
 
 ## Deliberately not built
 

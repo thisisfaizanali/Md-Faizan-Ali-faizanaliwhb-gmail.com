@@ -78,6 +78,24 @@ My fixture (`npm run fingerprint`): an extra role `reviewer` (rank 35, baseline 
 one device and denied on the other in org `Ironside Labs`. Neither exists in any document — the
 engine has to learn both from the tables.
 
+### 2026-09-26 · path fix, and the suites finally fail for the right reason
+
+Fixed both lines with `fileURLToPath(new URL(...))` (`8a591d3`). `db:reset` now loads cleanly,
+twice in a row.
+Checked whether this was only a Windows problem: `new URL('file:///home/a b/x.sql').pathname`
+gives `/home/a%20b/x.sql` on Node, so a Linux checkout under any folder with a space breaks the
+same way. It's a portability bug, not a Windows quirk.
+Now the failures are real ones:
+- `check-api.js`: `FAIL dana logs in — got 404 want 200`, then it aborts with
+  `Cannot read properties of undefined (reading 'map')`, after 2 cases. Like
+  `check-permissions.js`, it stops instead of tallying, so its count means nothing until login
+  works.
+- Playwright: `Timed out waiting 30000ms from config.webServer`, 0 tests run. The prediction from
+  the last entry held — I booted the same server by hand (port 8124, production, `e2e.db`) and it
+  came up fine; `/v1/auth/me` answering `404` is the only thing Playwright is waiting on.
+- The placeholder SPA builds in 1.11s to a 224.47 kB JS bundle — the starting size, to compare
+  against once the console exists.
+
 ## Phase 1 — token verification
 
 _What did you expect each failure mode to look like before you ran it? Which one behaved
