@@ -8,31 +8,44 @@ import { rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDatabase } from '../server/db.js';
+import { createRouter } from '../server/router.js';
+import { registerRoutes } from '../server/routes/index.js';
+import { authenticate } from '../server/context.js';
 
-const PORT = 8124;
-const BASE = `http://localhost:${PORT}/v1`;
 const DB = join(tmpdir(), 'remoteops-check-edges.db');
+const SECRET = 'test-secret';
+let BASE, server, db;
 
-for (const s of ['', '-wal', '-shm']) if (existsSync(DB + s)) rmSync(DB + s);
-execFileSync(process.execPath, ['scripts/load-db.js'], { env: { ...process.env, DATABASE_FILE: DB }, stdio: 'ignore' });
-
-const server = spawn(process.execPath, ['server/index.js'], {
-  env: { ...process.env, DATABASE_FILE: DB, PORT: String(PORT), NODE_ENV: 'production', JWT_SECRET: 'test-secret' },
-  stdio: ['ignore', 'ignore', 'inherit'],
-});
-
-await new Promise((r) => setTimeout(r, 1200));
+// Fresh seeded database + server. Sections that need the untouched fixture call it again.
+async function boot(port) {
+  for (const s of ['', '-wal', '-shm']) if (existsSync(DB + s)) rmSync(DB + s);
+  execFileSync(process.execPath, ['scripts/load-db.js'], { env: { ...process.env, DATABASE_FILE: DB }, stdio: 'ignore' });
+  server = spawn(process.execPath, ['server/index.js'], {
+    env: { ...process.env, DATABASE_FILE: DB, PORT: String(port), NODE_ENV: 'production', JWT_SECRET: SECRET },
+    stdio: ['ignore', 'ignore', 'inherit'],
+  });
+  await new Promise((r) => setTimeout(r, 1200));
+  BASE = `http://localhost:${port}/v1`;
+  // Direct access to server state the API does not expose yet (sessions, grants).
+  db = openDatabase(DB);
+}
+async function restart(port) {
+  db.close();
+  server.kill();
+  await new Promise((r) => server.once('exit', r));
+  await boot(port);
+}
 
 for (const event of ['uncaughtException', 'unhandledRejection']) {
   process.on(event, (err) => {
-    console.error(`\n  aborted: ${err?.message ?? err}`);
-    server.kill();
+    console.error(`
+  aborted: ${err?.message ?? err}`);
+    server?.kill();
     process.exit(1);
   });
 }
 
-// Read-only peek at server state the API does not expose yet (sessions, grants).
-const db = openDatabase(DB);
+await boot(8124);
 
 let pass = 0, fail = 0;
 const check = (label, actual, expected) => {
@@ -206,6 +219,141 @@ check('  ...membership active with the invite role',
   db.prepare("SELECT status, role FROM memberships WHERE org_id = 'org_acme' AND user_id = 'usr_acme_viewer'").get(),
   { status: 'active', role: 'operator' });
 check('  ...old grants stay revoked', liveGrants(), 0);
+
+// ===========================================================================
+// M5 — devices and grants, against a fresh fixture (earlier sections removed the viewer
+// and ended the seeded session).
+await restart(8125);
+console.log('\n== M5: device list and visibility (fresh fixture) ==');
+const tokOf = async (email) => (await login(email)).body.token;
+const dana5 = await tokOf('dana@example.test');
+const viewer5 = await tokOf('viewer@acme.test');
+const vList = await call('GET', '/orgs/org_acme/devices', { token: viewer5 });
+check('viewer list excludes kiosk-lobby-01', vList.body.devices.map((d) => d.id).includes('dev_kiosk_lobby_01'), false);
+check('  ...every row carries permissions', vList.body.devices.every((d) => d.permissions && d.permissions['device:view']), true);
+const danaGx = (await call('POST', '/auth/token', { token: dana5, body: { orgId: 'org_globex' } })).body.token;
+const gx = (await call('GET', '/orgs/org_globex/devices', { token: danaGx })).body.devices;
+check('dana in Globex: globex-desk-01 control allow', gx.find((d) => d.name === 'globex-desk-01').permissions['device:control'].effect, 'allow');
+check('device in another org -> 404', (await call('GET', '/orgs/org_acme/devices/dev_globex_desk_01', { token: dana5 })).status, 404);
+const kiosk = await call('GET', '/orgs/org_acme/devices/dev_kiosk_lobby_01', { token: viewer5 });
+check('viewer GET kiosk-lobby-01 -> 403 explicit_deny', [kiosk.status, kiosk.body?.error?.reason], [403, 'explicit_deny']);
+
+console.log('\n== M5: create, decommission ==');
+const mk = (body, token = dana5) => call('POST', '/orgs/org_acme/devices', { token, body });
+const toaster = await mk({ name: 'toast-01', kind: 'toaster' });
+check("kind 'toaster' -> 400 invalid_kind", [toaster.status, toaster.body?.error?.reason], [400, 'invalid_kind']);
+check('duplicate name -> 409', (await mk({ name: 'lab-mac-01', kind: 'macos' })).status, 409);
+check('viewer creates device -> 403', (await mk({ name: 'v-01', kind: 'linux' }, viewer5)).status, 403);
+const created = await mk({ name: '  new-box-01 ', kind: 'linux' });
+check('create -> 201 with permissions', [created.status, created.body?.name, typeof created.body?.permissions], [201, 'new-box-01', 'object']);
+
+check('decommission build-server-01 -> 204', (await call('DELETE', '/orgs/org_acme/devices/dev_build_server_01', { token: dana5 })).status, 204);
+check('  ...seeded live session ended, device_transferred',
+  db.prepare("SELECT state, end_reason FROM sessions WHERE id = 'ses_live_build_server'").get(), { state: 'ended', end_reason: 'device_transferred' });
+check('  ...soft-deleted device -> 404', (await call('GET', '/orgs/org_acme/devices/dev_build_server_01', { token: dana5 })).status, 404);
+
+console.log('\n== M5: transfer ==');
+const xfer = (id, toOrgId, token = dana5) => call('POST', `/orgs/org_acme/devices/${id}/transfer`, { token, body: { toOrgId } });
+check('to a non-member org -> 404', (await xfer('dev_qa_android_01', 'org_nope')).status, 404);
+check('to an org without provision (Globex viewer) -> 403', (await xfer('dev_qa_android_01', 'org_globex')).status, 403);
+const newOrg = (await call('POST', '/orgs', { token: dana5, body: { name: 'Transfer Target' } })).body;
+const qaGrant = await call('POST', '/orgs/org_acme/grants', { token: dana5,
+  body: { userId: 'usr_acme_viewer', effect: 'allow', permissions: ['device:control'], deviceId: 'dev_qa_android_01' } });
+check('setup: device-scoped grant on qa-android-01', qaGrant.status, 201);
+db.prepare(`INSERT INTO sessions (id, org_id, user_id, device_id, mode, state, authorized_by, expires_at)
+            VALUES ('ses_qa_live', 'org_acme', 'usr_acme_viewer', 'dev_qa_android_01', 'view', 'active', '{}', ?)`)
+  .run(new Date(Date.now() + 36e5).toISOString());
+const moved = await xfer('dev_qa_android_01', newOrg.id);
+check('transfer -> 200', [moved.status, moved.body], [200, { id: 'dev_qa_android_01', orgId: newOrg.id }]);
+check('  ...404 in the source org', (await call('GET', '/orgs/org_acme/devices/dev_qa_android_01', { token: dana5 })).status, 404);
+const newOrgTok = (await call('POST', '/auth/token', { token: dana5, body: { orgId: newOrg.id } })).body.token;
+check('  ...listed in the target org',
+  (await call('GET', `/orgs/${newOrg.id}/devices`, { token: newOrgTok })).body.devices.some((d) => d.id === 'dev_qa_android_01'), true);
+check('  ...its session ended',
+  db.prepare("SELECT state, end_reason FROM sessions WHERE id = 'ses_qa_live'").get(), { state: 'ended', end_reason: 'device_transferred' });
+check('  ...its source grant revoked',
+  db.prepare('SELECT revoked_at IS NOT NULL AS r FROM grants WHERE id = ?').get(qaGrant.body.id).r, 1);
+
+console.log('\n== M5: grant validation ==');
+const grant = (body, token = dana5) => call('POST', '/orgs/org_acme/grants', { token, body });
+const base = { userId: 'usr_acme_viewer', effect: 'allow' };
+const teleport = await grant({ ...base, permissions: ['device:teleport'] });
+check('device:teleport -> 400 unknown_permission', [teleport.status, teleport.body?.error?.reason], [400, 'unknown_permission']);
+check("'Device:Control' -> 400", (await grant({ ...base, permissions: ['Device:Control'] })).status, 400);
+check('[] -> 400', (await grant({ ...base, permissions: [] })).status, 400);
+const expired = await grant({ ...base, permissions: ['device:view'], expiresAt: new Date(Date.now() - 1000).toISOString() });
+check('expired expiresAt -> 400 GRANT_EXPIRED', [expired.status, expired.body?.error?.code], [400, 'GRANT_EXPIRED']);
+const offsetTs = new Date(Date.now() + 864e5).toISOString().replace('Z', '+00:00');
+const offset = await grant({ ...base, permissions: ['device:view'], deviceId: 'dev_lab_win_01', expiresAt: offsetTs });
+check("'+00:00' expiresAt accepted, stored with Z",
+  [offset.status, db.prepare('SELECT expires_at FROM grants WHERE id = ?').get(offset.body?.id)?.expires_at.endsWith('Z')], [201, true]);
+check('self-grant -> 403', (await grant({ ...base, userId: 'usr_dana', permissions: ['audit:read'] })).status, 403);
+check('cross-org deviceId -> 404', (await grant({ ...base, permissions: ['device:view'], deviceId: 'dev_globex_desk_01' })).status, 404);
+const scoped = await grant({ ...base, permissions: ['org:delete'], deviceId: 'dev_lab_win_01' });
+check('device-scoped org:delete -> 400 scope_mismatch', [scoped.status, scoped.body?.error?.reason], [400, 'scope_mismatch']);
+const admin5 = await tokOf('admin@acme.test');
+check('admin denies an owner -> 403',
+  (await grant({ userId: 'usr_acme_owner', effect: 'deny', permissions: ['device:view'] }, admin5)).status, 403);
+
+console.log('\n== M5: laundering ==');
+check('setup: owner denies admin device:terminal org-wide',
+  (await grant({ userId: 'usr_acme_admin', effect: 'deny', permissions: ['device:terminal'] })).status, 201);
+const adminFresh = await tokOf('admin@acme.test');
+check('admin grants device:terminal to an operator -> 403',
+  (await grant({ userId: 'usr_sam', effect: 'allow', permissions: ['device:terminal'] }, adminFresh)).status, 403);
+check('setup: Sam gets org-wide grant:create',
+  (await grant({ userId: 'usr_sam', effect: 'allow', permissions: ['grant:create'] })).status, 201);
+check('setup: Sam gets device:provision on lab-mac-01',
+  (await grant({ userId: 'usr_sam', effect: 'allow', permissions: ['device:provision'], deviceId: 'dev_lab_mac_01' })).status, 201);
+const samFresh = await tokOf('sam@example.test');
+check('Sam grants device:provision ORG-WIDE -> 403',
+  (await grant({ userId: 'usr_acme_viewer', effect: 'allow', permissions: ['device:provision'] }, samFresh)).status, 403);
+check('  ...the same grant scoped to lab-mac-01 -> 201',
+  (await grant({ userId: 'usr_acme_viewer', effect: 'allow', permissions: ['device:provision'], deviceId: 'dev_lab_mac_01' }, samFresh)).status, 201);
+
+console.log('\n== M5: revoke ==');
+const revoke = (id, token = dana5) => call('DELETE', `/orgs/org_acme/grants/${id}`, { token });
+check('revoke -> 204', (await revoke(offset.body.id)).status, 204);
+check('already revoked -> 404', (await revoke(offset.body.id)).status, 404);
+const ownerTok = await tokOf('owner@acme.test');
+const onDana = await grant({ userId: 'usr_dana', effect: 'deny', permissions: ['device:terminal'] }, ownerTok);
+check('setup: another owner puts a grant on dana', onDana.status, 201);
+check('revoke a grant on yourself -> 403', (await revoke(onDana.body.id, await tokOf('dana@example.test'))).status, 403);
+const samGrants = (await call('GET', '/orgs/org_acme/grants?userId=usr_sam', { token: ownerTok })).body.grants;
+check('GET grants?userId filters, rows carry status',
+  samGrants.length > 0 && samGrants.every((g) => g.userId === 'usr_sam' && g.status === 'active'), true);
+
+console.log('\n== M5: device list query count does not grow ==');
+{
+  // In-process, so every statement the handler runs can be counted.
+  let n = 0;
+  const counted = new Proxy(db, { get(t, k) {
+    if (k === 'prepare') return (sql) => { const st = t.prepare(sql);
+      return new Proxy(st, { get(s, m) { const v = s[m];
+        return ['get', 'all', 'run'].includes(m) ? (...a) => (n++, v.apply(s, a)) : typeof v === 'function' ? v.bind(s) : v; } }); };
+    const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } });
+  const router = createRouter();
+  registerRoutes(router, { db: counted, secret: SECRET });
+  const listOnce = async () => {
+    const hit = router.match('GET', `/v1/orgs/${newOrg.id}/devices`);
+    const ctx = { db: counted, requestId: 'req_count', query: new URLSearchParams(), body: {}, req: {} };
+    Object.assign(ctx, authenticate(db, SECRET)({ headers: { authorization: `Bearer ${newOrgTok}` } }, hit.params));
+    let body;
+    const res = { setHeader() {}, writeHead() {}, end(b) { body = JSON.parse(b); } };
+    n = 0;
+    await hit.handler(ctx, hit.params, res);
+    return { n, rows: body.devices.length };
+  };
+  // The transfer-target org already holds qa-android-01; dana owns it.
+  const addDevice = (i) => db.prepare("INSERT INTO devices (id, org_id, name, kind) VALUES (?, ?, ?, 'linux')")
+    .run(`dev_cnt_${i}`, newOrg.id, `cnt-${i}`);
+  addDevice(1);
+  const two = await listOnce();
+  addDevice(2); addDevice(3); addDevice(4);
+  const five = await listOnce();
+  console.log(`   statements: ${two.n} for ${two.rows} devices, ${five.n} for ${five.rows} devices`);
+  check('same statement count for 2 and 5 devices', [two.rows, five.rows, five.n === two.n], [2, 5, true]);
+}
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAILURES'} — ${pass} passed, ${fail} failed\n`);
 db.close();
