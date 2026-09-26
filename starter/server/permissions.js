@@ -107,7 +107,9 @@ function evaluate(state, deviceId) {
   const strict = evaluateOrgWide(state);
   for (const p of state.catalogue) {
     let r = strict[p.key];
-    if (r.effect === 'deny' && r.reason !== 'explicit_deny') {
+    // Only device-scoped resources can be lifted: a device-scoped org:delete row (the FK
+    // accepts it; the API refuses to create one) must not grant org:delete org-wide.
+    if (r.effect === 'deny' && r.reason !== 'explicit_deny' && DEVICE_SCOPED_RESOURCES.includes(p.resource)) {
       const lift = state.grants.find((g) =>
         g.deviceId !== null && g.effect === 'allow' && g.active && covers(g.pattern, p) &&
         !state.grants.some((d) => d.deviceId === g.deviceId && d.effect === 'deny' && d.active && covers(d.pattern, p)));
@@ -125,6 +127,15 @@ function evaluateOrgWide(state) {
   for (const p of state.catalogue) permissions[p.key] = decide(p, state.role, orgWide);
   return permissions;
 }
+
+// What a user holds strictly org-wide (baseline + org-wide grants, no device-scoped lift).
+// The authority check for acting at org scope: granting org-wide, receiving a transfer.
+export function resolveOrgWide(db, { userId, orgId, now = new Date() }) {
+  const state = load(db, { userId, orgId, now });
+  return { role: state.role, permissions: heldOrgWide(state) };
+}
+
+const heldOrgWide = (state) => (state.denyAll ? evaluate(state, null).permissions : evaluateOrgWide(state));
 
 // Resolve one user's permission set in one org. deviceId === null means the org-level
 // view; a deviceId means the exact per-device check.
@@ -169,8 +180,7 @@ export function assertCan(db, ctx, permission, deviceId) {
 // Org-wide means strictly org-wide: a device-scoped allow does not let you grant org-wide.
 export function assertMayGrant(db, ctx, patterns, deviceId = null) {
   const state = load(db, { userId: ctx.userId, orgId: ctx.orgId, now: new Date() });
-  const held = state.denyAll ? evaluate(state, null).permissions
-    : deviceId === null ? evaluateOrgWide(state) : evaluate(state, deviceId).permissions;
+  const held = deviceId === null ? heldOrgWide(state) : evaluate(state, deviceId).permissions;
   for (const p of state.catalogue) {
     if (patterns.some((pt) => covers(pt, p)) && held[p.key].effect !== 'allow') {
       throw forbidden(`you do not hold ${p.key} at this scope`, 'missing_permission');

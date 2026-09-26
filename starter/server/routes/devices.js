@@ -3,11 +3,11 @@
 
 import { send, badRequest, forbidden, notFound, conflict, normalizeTs, HttpError } from '../http.js';
 import { newId, nowIso, bumpPermVersion } from '../db.js';
-import { assertCan, assertMayGrant, resolve, resolveDevices, DEVICE_SCOPED_RESOURCES } from '../permissions.js';
+import { assertCan, assertMayGrant, resolve, resolveDevices, resolveOrgWide, DEVICE_SCOPED_RESOURCES } from '../permissions.js';
 import { assertCanModify, endActiveSessions } from '../lifecycle.js';
 import { audit } from '../audit.js';
 
-function visibleDevice(db, orgId, id) {
+export function visibleDevice(db, orgId, id) {
   const d = db.prepare('SELECT * FROM devices WHERE id = ? AND org_id = ? AND deleted_at IS NULL').get(id, orgId);
   if (!d) throw notFound();
   return d;
@@ -149,7 +149,8 @@ export function registerDeviceRoutes(r, { db }) {
         WHERE m.org_id = ? AND m.user_id = ? AND m.status = 'active'`
     ).get(toOrgId, ctx.userId);
     if (!member) throw notFound();
-    const there = resolve(db, { userId: ctx.userId, orgId: toOrgId }).permissions['device:provision'];
+    // Strictly org-wide: provision on one device there is not authority to receive into the org.
+    const there = resolveOrgWide(db, { userId: ctx.userId, orgId: toOrgId }).permissions['device:provision'];
     if (there.effect !== 'allow') throw forbidden('missing permission device:provision in the target org', 'missing_permission');
 
     db.transaction(() => {
