@@ -26,6 +26,8 @@ export function audit(db, ctx, { orgId = ctx.orgId, action, targetType = null, t
 }
 
 // Run fn(); if it refuses with a 403 in a known org, record the denial before rethrowing.
+// Only 403s. A 404 is not audited: writing "someone probed org B" into org B's log would leak
+// the prober. A 409 DEVICE_BUSY is a conflict, not a refusal of authority.
 export async function auditDenials(db, ctx, meta, fn) {
   try {
     return await fn();

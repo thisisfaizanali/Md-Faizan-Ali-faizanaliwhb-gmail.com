@@ -18,6 +18,7 @@
 
 import { verifyAccessToken, assertFresh } from './auth.js';
 import { unauthenticated, notFound, forbidden } from './http.js';
+import { audit } from './audit.js';
 
 const BEARER = /^Bearer +([^\s]+)$/i;
 
@@ -41,7 +42,14 @@ export function authenticate(db, secret) {
       throw unauthenticated('not a member of this org');
     }
     assertFresh(claims, membership);
-    if (membership.status === 'suspended') throw forbidden('membership suspended', 'suspended');
+    if (membership.status === 'suspended') {
+      // Refused before the route wrapper runs, so the denial is recorded here. Authenticated
+      // paths never carry tokens (invite tokens live on public routes only).
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      audit(db, { orgId: claims.org, userId: claims.sub, requestId: null },
+        { action: `${req.method} ${pathname}`, result: 'deny', reasonCode: 'suspended' });
+      throw forbidden('membership suspended', 'suspended');
+    }
 
     // Role from the row, never from claims.role.
     return { userId: claims.sub, orgId: claims.org, role: membership.role, membership, claims, resolved: new Map() };

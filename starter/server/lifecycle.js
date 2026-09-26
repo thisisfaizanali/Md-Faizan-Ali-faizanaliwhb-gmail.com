@@ -14,12 +14,7 @@
 
 import { forbidden, selfRoleChange, badRequest, lastOwner } from './http.js';
 import { nowIso } from './db.js';
-
-const todo = (name) =>
-  Object.assign(
-    new Error(`TODO: server/lifecycle.js — ${name}() is yours to write (BRIEF.md §3).`),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+import { resolve, MODE_PERMISSION } from './permissions.js';
 
 // The one role named in code: creator role, last-owner rule, "only owners confer owner".
 export const OWNER = 'owner';
@@ -78,5 +73,30 @@ export function endActiveSessions(db, { orgId, userId = null, deviceId = null, r
     .run(reason, nowIso(), orgId, userId, userId, deviceId, deviceId, exceptSessionId, exceptSessionId).changes;
 }
 
-export function snapshotAuthority(db, { userId, orgId, deviceId }) { throw todo('snapshotAuthority'); }
-export function sessionExpiry(db, orgId) { throw todo('sessionExpiry'); }
+// The authority a session starts with, frozen (PERMISSIONS.md §7.1): the role, and the grants
+// behind session:start and the mode permission on that device. Same shape as the seed.
+export function snapshotAuthority(db, { userId, orgId, deviceId }, mode) {
+  const snapshotAt = nowIso();
+  const { role, permissions } = resolve(db, { userId, orgId, deviceId, now: new Date(snapshotAt) });
+  const grantIds = [...new Set(['session:start', MODE_PERMISSION[mode]]
+    .map((k) => permissions[k]?.source)
+    .filter((src) => src?.startsWith('grant:'))
+    .map((src) => src.slice('grant:'.length)))];
+  return { role, grantIds, snapshotAt };
+}
+
+export function sessionExpiry(db, orgId, now = new Date()) {
+  const { max_session_minutes: minutes } = db.prepare('SELECT max_session_minutes FROM organizations WHERE id = ?').get(orgId);
+  return new Date(new Date(now).getTime() + minutes * 6e4).toISOString();
+}
+
+// one_exclusive_session_per_device knows nothing about expires_at: an expired control session
+// holds the device until something ends it. Sweep before inserting and before any read.
+export function sweepExpired(db, { orgId, deviceId = null, sessionId = null }) {
+  const now = nowIso();
+  return db.prepare(
+    `UPDATE sessions SET state = 'ended', end_reason = 'session_expired', ended_at = ?
+      WHERE org_id = ? AND state = 'active' AND expires_at <= ?
+        AND (? IS NULL OR device_id = ?) AND (? IS NULL OR id = ?)`
+  ).run(now, orgId, now, deviceId, deviceId, sessionId, sessionId).changes;
+}
