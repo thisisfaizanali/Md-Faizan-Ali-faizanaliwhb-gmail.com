@@ -15,7 +15,7 @@ function orgName(value) {
 }
 
 // A strict non-negative integer from a query string; anything else is a 400, never clamped.
-function queryInt(query, key, fallback, min, max) {
+export function queryInt(query, key, fallback, min, max) {
   const raw = query.get(key);
   if (raw === null) return fallback;
   const n = /^\d+$/.test(raw) ? Number(raw) : NaN;

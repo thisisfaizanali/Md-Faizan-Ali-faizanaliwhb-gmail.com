@@ -10,6 +10,7 @@ import { registerAuthRoutes } from './auth.js';
 import { registerOrgRoutes } from './orgs.js';
 import { registerInviteRoutes } from './invites.js';
 import { registerDeviceRoutes } from './devices.js';
+import { registerSessionRoutes } from './sessions.js';
 
 export function registerRoutes(router, deps) {
   const { db } = deps;
@@ -24,4 +25,5 @@ export function registerRoutes(router, deps) {
   registerOrgRoutes(r, deps);
   registerInviteRoutes(r, deps);
   registerDeviceRoutes(r, deps);
+  registerSessionRoutes(r, deps);
 }
