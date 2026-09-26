@@ -23,11 +23,8 @@
 
 import { forbidden, badRequest } from './http.js';
 
-const todo = (name) =>
-  Object.assign(
-    new Error(`TODO: server/permissions.js — ${name}() is yours to write (BRIEF.md §3).`),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+// The one place resource names appear in code: resources whose permissions may be device-scoped.
+export const DEVICE_SCOPED_RESOURCES = ['device', 'session'];
 
 export const MODE_PERMISSION = { view: 'device:view', control: 'device:control', terminal: 'device:terminal' };
 
@@ -97,7 +94,6 @@ function evaluate(state, deviceId) {
     for (const p of state.catalogue) permissions[p.key] = deny(null, state.denyAll);
     return { role: state.role, permissions };
   }
-  const orgWide = state.grants.filter((g) => g.deviceId === null);
 
   if (deviceId !== null) {
     const applying = state.grants.filter((g) => g.deviceId === null || g.deviceId === deviceId);
@@ -108,8 +104,9 @@ function evaluate(state, deviceId) {
   // Org-level: org-wide grants decide; if still not allowed (and not org-wide denied), an
   // active device-scoped allow on some device without a deny there for P lifts it.
   // Device-scoped denies never remove an org-level allow.
+  const strict = evaluateOrgWide(state);
   for (const p of state.catalogue) {
-    let r = decide(p, state.role, orgWide);
+    let r = strict[p.key];
     if (r.effect === 'deny' && r.reason !== 'explicit_deny') {
       const lift = state.grants.find((g) =>
         g.deviceId !== null && g.effect === 'allow' && g.active && covers(g.pattern, p) &&
@@ -119,6 +116,14 @@ function evaluate(state, deviceId) {
     permissions[p.key] = r;
   }
   return { role: state.role, permissions };
+}
+
+// Baseline + org-wide grants only, no device-scoped lift. What the caller holds org-wide.
+function evaluateOrgWide(state) {
+  const permissions = {};
+  const orgWide = state.grants.filter((g) => g.deviceId === null);
+  for (const p of state.catalogue) permissions[p.key] = decide(p, state.role, orgWide);
+  return permissions;
 }
 
 // Resolve one user's permission set in one org. deviceId === null means the org-level
@@ -160,8 +165,17 @@ export function assertCan(db, ctx, permission, deviceId) {
 }
 
 // No privilege laundering: you may only grant authority you hold at that scope.
+// Every concrete key the patterns expand to must be held at that scope, for allow AND deny.
+// Org-wide means strictly org-wide: a device-scoped allow does not let you grant org-wide.
 export function assertMayGrant(db, ctx, patterns, deviceId = null) {
-  throw todo('assertMayGrant');
+  const state = load(db, { userId: ctx.userId, orgId: ctx.orgId, now: new Date() });
+  const held = state.denyAll ? evaluate(state, null).permissions
+    : deviceId === null ? evaluateOrgWide(state) : evaluate(state, deviceId).permissions;
+  for (const p of state.catalogue) {
+    if (patterns.some((pt) => covers(pt, p)) && held[p.key].effect !== 'allow') {
+      throw forbidden(`you do not hold ${p.key} at this scope`, 'missing_permission');
+    }
+  }
 }
 
 // The compound check: session:start AND the permission for the requested mode, and a
