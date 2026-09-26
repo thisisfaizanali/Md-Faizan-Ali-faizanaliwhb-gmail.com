@@ -46,6 +46,39 @@ our own tokens, and `signToken` always emits the canonical form, so I don't expe
 
 ---
 
+### The org-level view can be raised by a device-scoped allow, never lowered by a device-scoped deny
+
+**What I chose:** org-level answers come from the role baseline and org-wide grants; an active
+device-scoped allow on a live device with no deny there raises it; device-scoped denies are
+ignored at org level. `evaluate()` in `server/permissions.js` (`8977210`).
+**Why:** the org-level view gates navigation and page-level entries. Read literally, "the union
+across all devices" (PERMISSIONS.md §3) is empty for an org with no devices, so a brand-new org's
+owner would resolve to deny on `device:provision` and never see Add device (BUILD-LOG, Phase 2).
+**What I rejected:** the literal union over existing devices, for that reason. Also "any
+device-scoped deny lowers the org-level answer": a viewer with one denied kiosk would lose the
+whole Devices card while four other rows are still theirs to see.
+**What would change my mind:** a case where a device-scoped deny on an org's only device is
+expected to hide the org-level entry. Then I'd switch to the union for non-empty orgs and keep the
+baseline as the floor only for empty ones.
+
+---
+
+### An allow whose window has closed reports `expired_grant`, not `implicit`
+
+**What I chose:** when no active grant or baseline allows P but an expired allow grant covers it,
+the answer is `deny`, `source: grant:<id>`, `reason: expired_grant` — step 4 of `decide()` in
+`server/permissions.js` (`8977210`). A grant that hasn't started yet counts as absent.
+**Why:** "implicit" means nobody granted it, which is false here — someone did, and it lapsed.
+PERMISSIONS.md §5 lists `expired_grant` as a reason, and the console has to explain a lock that
+used to be open differently from one that never was.
+**What I rejected:** reporting `implicit` for everything that isn't an explicit deny. It is simpler
+and passes every shipped test (`check-permissions.js` only asserts the effect for the expired
+case), but it makes "your access ran out" read as "you never had access".
+**What would change my mind:** a test that pins the reason for an expired grant to `implicit`. I'd
+comply and keep the provenance in `source` only.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
@@ -98,6 +131,18 @@ cannot tell the difference between a decision and an oversight.
   SPA first", but `"test": "playwright test"` has no build step. The webServer runs with
   `NODE_ENV=production`, so it serves `dist/`, which only exists after `npm run build`. I left
   both files as they are and run `npm run build` before `npx playwright test` myself.
+
+- **The session-start reason the docs don't list.** PERMISSIONS.md §5: "`reason` is the
+  machine-readable cause — `missing_permission`, `explicit_deny`, `suspended`, `expired_grant`,
+  `scope_mismatch`." `check-permissions.js` and `check-api.js` both require
+  `missing_device_permission` when the mode permission is what's missing. Built against the tests:
+  it is the only way the two halves of the compound check stay distinguishable.
+
+- **"No permissions anywhere."** PERMISSIONS.md §3 step 1: "A deleted or suspended user has no
+  permissions anywhere." The schema has no way to delete a user (`users` has no `deleted_at`), and
+  suspension is `memberships.status` — per org. AUTH-DATA-MODEL.md §7 agrees with the schema:
+  suspension ends sessions "in that org". Built against the schema: suspended in Acme, still
+  active in Globex.
 
 ## Deliberately not built
 

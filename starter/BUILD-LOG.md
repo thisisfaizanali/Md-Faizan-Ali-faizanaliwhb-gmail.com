@@ -128,6 +128,43 @@ code rejects all three; nothing tests them yet. Noted for Phase 8.
 _This is where most people's first model is wrong. Write down the model you started with, the
 observation that broke it, and the model you moved to. Be specific about the observation._
 
+### 2026-09-26 · "union across all devices" breaks an empty org
+
+PERMISSIONS.md §3 defines the org-level view as the union across all devices in the org. Taken
+literally, a new org has zero devices, so the union is over nothing and every permission is
+deny — the owner of a fresh org would lose `device:provision` and could never add a first device.
+Settled it myself: baseline + org-wide grants decide; a device-scoped allow can raise the answer,
+a device-scoped deny never lowers it. `evaluate()` in `server/permissions.js` (`8977210`). No
+shipped test covers either case.
+
+### 2026-09-26 · expected 403 suspended, got 401 TOKEN_STALE
+
+Expected a suspended member's next request to get `403 suspended` (AUTH-DATA-MODEL.md §10).
+Probed `authenticate()`: with `perm_version` bumped on suspension — which `check-permissions.js`
+also does — the old token gets `401 TOKEN_STALE`. Only a freshly minted token reaches the `403`.
+Freshness is checked before status, so the 403 only exists after a refresh. That makes what
+`/auth/refresh` does for a suspended membership the real decision, not the context check.
+
+### 2026-09-26 · three queries, whatever the device count
+
+Counted statements by wrapping `db.prepare`: `resolve()` = 3 (membership, catalogue + baseline,
+grants), 2 for a non-member. `resolveDevices()` = 3 for 3 devices and 3 for all 7 fixture devices.
+Grants are loaded once and every device is evaluated in memory.
+
+### 2026-09-26 · a grant can outlive its device
+
+A device-scoped grant stores `org_id` and `device_id`, but the device can be soft-deleted or
+transferred to another org and the grant row doesn't change. Left alone, an allow on a device org
+A no longer has would still lift A's org-level view. The grants query joins `devices` on
+`id AND org_id AND deleted_at IS NULL`, so a grant only counts while its device is still there.
+Untested so far — noted for Phase 8.
+
+### 2026-09-26 · engine green on the first run
+
+`check-permissions.js` 35/35 and `npm run personalisation` 18/18, first run (`8977210`,
+`346bf5d`, `46ce35c`). Nothing public tests `resolveDevices`, the `expired_grant` reason, or
+`assertCan`'s reason codes yet.
+
 ## Phase 3 — orgs, members, invites
 
 _Anything you had to work out that no document states. Invite lifecycle states are a common
