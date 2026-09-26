@@ -2,16 +2,22 @@
 // ../router.js, first match wins, so register specific paths before parameterised
 // ones ('/members/me' before '/members/:userId').
 //
-// YOURS TO WRITE. The file list is empty on purpose — every endpoint in BRIEF.md §5.1
-// is yours to add, and the response shapes the console reads are in §5.2.
-//
-// Suggested split, mirroring the API: auth, orgs (orgs + members + effective + audit),
-// invites, devices (devices + grants), sessions. Keep the registration order here.
-//
-// The server boots with this file empty: every /v1/* request returns 404 until you
-// register something. That is the intended starting line.
+// Every handler is wrapped once so a 403 in a known org is audited as a denial,
+// with the route as the action. Success rows are written by the handlers themselves.
+
+import { auditDenials } from '../audit.js';
+import { registerAuthRoutes } from './auth.js';
+import { registerOrgRoutes } from './orgs.js';
 
 export function registerRoutes(router, deps) {
-  const { db, secret } = deps;
-  void db; void secret;
+  const { db } = deps;
+  const guard = (method, pattern, handler) => (ctx, params, res) =>
+    auditDenials(db, ctx, { action: `${method} ${pattern}`, targetType: null, targetId: null },
+      () => handler(ctx, params, res));
+
+  const r = Object.fromEntries(['get', 'post', 'patch', 'delete'].map((m) =>
+    [m, (pattern, handler) => router[m](pattern, guard(m.toUpperCase(), pattern, handler))]));
+
+  registerAuthRoutes(r, deps);
+  registerOrgRoutes(r, deps);
 }
