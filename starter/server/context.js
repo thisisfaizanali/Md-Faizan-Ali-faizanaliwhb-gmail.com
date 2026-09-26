@@ -16,14 +16,34 @@
 // authenticate(db, secret) returns (req, params) => caller, where caller carries at
 // least { userId, orgId, role, membership, claims }.
 
-const todo = () =>
-  Object.assign(
-    new Error('TODO: server/context.js — authenticate() is yours to write (BRIEF.md §3).'),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+import { verifyAccessToken, assertFresh } from './auth.js';
+import { unauthenticated, notFound, forbidden } from './http.js';
+
+const BEARER = /^Bearer +([^\s]+)$/i;
 
 export function authenticate(db, secret) {
+  const findMembership = db.prepare(
+    `SELECT m.* FROM memberships m
+       JOIN organizations o ON o.id = m.org_id AND o.deleted_at IS NULL
+      WHERE m.org_id = ? AND m.user_id = ?`
+  );
+
   return function buildContext(req, params) {
-    throw todo();
+    const match = BEARER.exec(req.headers?.authorization ?? '');
+    if (!match) throw unauthenticated('missing bearer token');
+    const claims = verifyAccessToken(match[1], secret);
+
+    // The token's org is the only one addressable; any other is invisible.
+    if (params?.org !== undefined && params.org !== claims.org) throw notFound();
+
+    const membership = findMembership.get(claims.org, claims.sub);
+    if (!membership || membership.status === 'invited' || membership.status === 'removed') {
+      throw unauthenticated('not a member of this org');
+    }
+    assertFresh(claims, membership);
+    if (membership.status === 'suspended') throw forbidden('membership suspended', 'suspended');
+
+    // Role from the row, never from claims.role.
+    return { userId: claims.sub, orgId: claims.org, role: membership.role, membership, claims, resolved: new Map() };
   };
 }
