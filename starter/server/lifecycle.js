@@ -46,11 +46,16 @@ export function assertCanModify(db, ctx, target, newRole) {
   if (!(ranks[ctx.role] > ranks[target.role] || ctx.role === OWNER)) {
     throw forbidden('you cannot modify a member of equal or higher role', 'rank');
   }
-  if (isRoleChange) {
-    assertRoleExists(db, newRole);
-    if (newRole === OWNER && ctx.role !== OWNER) throw forbidden('only an owner can confer owner', 'rank');
-    if (ranks[newRole] > ranks[ctx.role]) throw forbidden('you cannot assign a role above your own', 'rank');
-  }
+  if (isRoleChange) assertCanAssign(db, ctx, newRole);
+}
+
+// Roles the caller may confer (role change or invite): owner only by an owner, and never
+// above the caller's own rank.
+export function assertCanAssign(db, ctx, role) {
+  assertRoleExists(db, role);
+  if (role === OWNER && ctx.role !== OWNER) throw forbidden('only an owner can confer owner', 'rank');
+  const ranks = roleRanks(db);
+  if (ranks[role] > ranks[ctx.role]) throw forbidden('you cannot assign a role above your own', 'rank');
 }
 
 // Call inside the same transaction as the write that takes `userId` out of (active AND owner).

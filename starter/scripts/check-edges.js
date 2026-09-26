@@ -151,6 +151,62 @@ check('  ...recorded as a deny row', denial && { action: denial.action, reason_c
 check('successful mutations are audited', events.some((e) => e.action === 'member.suspend' && e.result === 'allow'), true);
 check('no row carries a token', JSON.stringify(events).includes(danaTok.split('.')[2]), false);
 
+console.log('\n== invites ==');
+const invite = (email, role = 'operator', token = danaTok) =>
+  call('POST', '/orgs/org_acme/invites', { token, body: { email, role } });
+const accept = (raw, body) => call('POST', `/invites/${raw}/accept`, { body });
+
+const inv1 = await invite('  Invitee.One@Example.TEST ');
+check('invite -> 201', inv1.status, 201);
+const raw1 = inv1.body.inviteToken;
+const peek1 = await call('GET', `/invites/${raw1}`);
+check('peek -> 200 with exactly 4 keys', [peek1.status, Object.keys(peek1.body).sort()],
+  [200, ['email', 'expiresAt', 'orgName', 'role']]);
+check('the raw token is not in the database',
+  db.prepare('SELECT count(*) AS n FROM invites WHERE instr(id || token_hash || email, ?) > 0').get(raw1).n, 0);
+check('double invite of the same email -> 409', (await invite('invitee.one@example.test')).status, 409);
+check('invite an existing active member -> 409', (await invite('sam@example.test')).status, 409);
+check('admin invites owner -> 403', (await invite('owner.wannabe@example.test', 'owner', adminTok)).status, 403);
+check('bad email -> 400', (await invite('no-at-sign')).status, 400);
+
+const inv2 = await invite('revoke.me@example.test');
+check('revoke -> 204', (await call('DELETE', `/orgs/org_acme/invites/${inv2.body.id}`, { token: danaTok })).status, 204);
+check('  ...then peek -> 410', (await call('GET', `/invites/${inv2.body.inviteToken}`)).status, 410);
+check('  ...revoke again -> 404', (await call('DELETE', `/orgs/org_acme/invites/${inv2.body.id}`, { token: danaTok })).status, 404);
+
+const inv3 = await invite('expire.me@example.test');
+db.prepare('UPDATE invites SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), inv3.body.id);
+check('expired invite: peek -> 410', (await call('GET', `/invites/${inv3.body.inviteToken}`)).status, 410);
+const listed = (await call('GET', '/orgs/org_acme/invites', { token: danaTok })).body.invites;
+check('  ...listed as expired, no token_hash',
+  [listed.find((i) => i.id === inv3.body.id)?.status, JSON.stringify(listed).includes('token')], ['expired', false]);
+check('  ...re-invite the same email -> 201', (await invite('expire.me@example.test')).status, 201);
+
+const acc1 = await accept(raw1, { name: 'Invitee One', password: 'longenough1' });
+check('accept -> 200 with the login shape', [acc1.status, acc1.body?.role, acc1.body?.org?.id], [200, 'operator', 'org_acme']);
+check('  ...sets the refresh cookie', /^rt=[^;]+;/.test(acc1.setCookie ?? ''), true);
+check('accept again -> 409', (await accept(raw1, { name: 'X', password: 'longenough1' })).status, 409);
+
+const inv4 = await invite('race@example.test');
+const race = await Promise.all([1, 2].map(() => accept(inv4.body.inviteToken, { name: 'Racer', password: 'longenough1' })));
+check('two parallel accepts -> one 200, one 409', race.map((x) => x.status).sort(), [200, 409]);
+
+console.log('\n== re-invite a removed member (existing user) ==');
+// usr_acme_viewer was removed above, with their grants revoked.
+const viewerName = db.prepare("SELECT name FROM users WHERE id = 'usr_acme_viewer'").get().name;
+const inv5 = await invite('viewer@acme.test', 'operator');
+check('re-invite removed member -> 201', inv5.status, 201);
+check('existing user, wrong password -> 401', (await accept(inv5.body.inviteToken, { name: 'Hijack', password: 'wrongpass1' })).status, 401);
+const acc5 = await accept(inv5.body.inviteToken, { name: 'Ignored', password: 'demo1234' });
+check('existing user, right password -> 200, same user', [acc5.status, acc5.body?.user?.id], [200, 'usr_acme_viewer']);
+check('  ...one users row, name untouched',
+  db.prepare("SELECT count(*) AS n, max(name) AS name FROM users WHERE email = 'viewer@acme.test'").get(),
+  { n: 1, name: viewerName });
+check('  ...membership active with the invite role',
+  db.prepare("SELECT status, role FROM memberships WHERE org_id = 'org_acme' AND user_id = 'usr_acme_viewer'").get(),
+  { status: 'active', role: 'operator' });
+check('  ...old grants stay revoked', liveGrants(), 0);
+
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAILURES'} — ${pass} passed, ${fail} failed\n`);
 db.close();
 server.kill();

@@ -12,6 +12,9 @@ import { resolve } from '../permissions.js';
 // Unknown emails still pay for one scrypt, so response time doesn't reveal the account.
 const DUMMY_HASH = hashPassword(randomUUID());
 
+// Shared with invite accept, so a wrong password reads the same everywhere.
+export const badLogin = () => unauthenticated('invalid email or password');
+
 const COOKIE = 'rt';
 const COOKIE_ATTRS = 'HttpOnly; Secure; SameSite=Strict; Path=/v1/auth';
 
@@ -23,7 +26,7 @@ function readCookie(req) {
   return null;
 }
 
-function issueRefresh(db, res, userId, familyId = randomUUID()) {
+export function issueRefresh(db, res, userId, familyId = randomUUID()) {
   const raw = newRefreshToken();
   db.prepare('INSERT INTO refresh_tokens (id, user_id, token_hash, family_id, expires_at) VALUES (?,?,?,?,?)')
     .run(randomUUID(), userId, hashRefreshToken(raw), familyId,
@@ -53,7 +56,7 @@ function authShape(db, userId, orgId) {
   };
 }
 
-function withToken(db, secret, userId, orgId) {
+export function withToken(db, secret, userId, orgId) {
   const shape = authShape(db, userId, orgId);
   const pv = db.prepare('SELECT perm_version FROM memberships WHERE org_id = ? AND user_id = ?').get(orgId, userId).perm_version;
   const token = issueAccessToken({ userId, orgId, role: shape.role, permVersion: pv }, secret);
@@ -72,7 +75,7 @@ export function registerAuthRoutes(r, { db, secret }) {
     const password = String(ctx.body.password ?? '');
     const user = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
     const ok = verifyPassword(password, user?.password_hash ?? DUMMY_HASH);
-    if (!user || !ok) throw unauthenticated('invalid email or password');
+    if (!user || !ok) throw badLogin();
 
     const active = activeMemberships(db, user.id);
     const orgId = active.some((m) => m.org_id === ctx.body.orgId) ? ctx.body.orgId : firstActiveOrg(db, user.id);
