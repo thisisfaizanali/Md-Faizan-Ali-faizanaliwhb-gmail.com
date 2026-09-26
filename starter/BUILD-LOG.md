@@ -233,6 +233,35 @@ password on file are never overwritten. `check-edges.js`: wrong password `401`, 
 _What happens at the boundary where two grants disagree, or where a grant's scope and the
 question's scope differ? Say what you predicted and what you got._
 
+### 2026-09-26 · my own org-level rule opened a laundering hole
+
+The Phase 2 lift means a permission held on one device reads as `allow` at org level. A
+laundering check against that view would let someone with `device:provision` on lab-mac-01 grant
+`device:provision` org-wide. So `assertMayGrant` checks an org-wide grant against baseline +
+org-wide grants only, no lift (`evaluateOrgWide`, `e64eab6`). `check-edges.js`: Sam, holding it on
+lab-mac-01 only, grants it org-wide → `403`; the same grant scoped to lab-mac-01 → `201`.
+
+### 2026-09-26 · a device-scoped `org:delete` turns an admin into someone who can delete the org
+
+`org:delete` is a valid pattern, so the foreign key accepts it with a `device_id`. Checked it
+against the engine on a scratch database: admin's org-level `org:delete` goes from `deny` to
+`{"effect":"allow","source":"grant:g"}` once that grant exists. The API now refuses device-scoped
+grants outside the `device` and `session` resources with `400 scope_mismatch` (`a8f04f6`). A row
+written any other way would still lift — the engine needs the same limit.
+
+### 2026-09-26 · two refusals I didn't write
+
+`device:teleport` → `400 unknown_permission` and `kind: 'toaster'` → `400 invalid_kind`, with no
+lookup in code for either. The first is the foreign key on `grant_permissions` →
+`permission_patterns`; the second is the `CHECK (kind IN ...)` on `devices`. The handlers only map
+`SQLITE_CONSTRAINT_FOREIGNKEY` / `SQLITE_CONSTRAINT_CHECK` to a 400. Both only work because
+`server/db.js` turns `foreign_keys` on for every connection.
+
+### 2026-09-26 · device list: 7 statements for 2 devices, 7 for 5
+
+Counted in-process through a wrapped `db`: 3 for the `device:list` check, 1 for the device rows,
+3 for one `resolveDevices` call covering every row. Same number at 2 and 5 devices.
+
 ## Phase 5 — sessions
 
 _Two permissions, one device. What did you have to resolve, and in what order, to keep the two

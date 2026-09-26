@@ -144,6 +144,25 @@ predicate, not in a housekeeping `UPDATE` — though SQLite's partial indexes ca
 
 ---
 
+### An org-wide grant needs the permission held org-wide; a device-scoped one can only name device and session permissions
+
+**What I chose:** `assertMayGrant` checks an org-wide grant against baseline + org-wide grants
+only, and a device-scoped grant against the caller's answer on that device (`e64eab6`). Device-scoped
+grants may only name `device`/`session` permissions or their wildcards; anything else, including
+`*`, is `400 scope_mismatch` (`a8f04f6`). Rank rules apply to grant targets as well.
+**Why:** both follow from my own org-level lift (DECISIONS, above). The lift is right for navigation
+but wrong as a measure of what you *hold*: `check-edges.js` shows Sam holding `device:provision`
+on one device and getting `403` for the org-wide version. A scratch-database check showed a
+device-scoped `org:delete` lifting an admin to org-level `org:delete` (BUILD-LOG, Phase 4).
+**What I rejected:** checking laundering against the normal org-level view — the obvious reuse of
+`resolve()`, and exactly the hole. Also rejected: letting a device-scoped `org:delete` through as
+harmless because it's "on a device"; it isn't harmless once the lift sees it.
+**What would change my mind:** a permission outside `device`/`session` that genuinely varies per
+device. Then `DEVICE_SCOPED_RESOURCES` becomes a column on `permissions` rather than a constant —
+which would need a schema change I'm not allowed to make.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
