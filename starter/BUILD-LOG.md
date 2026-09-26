@@ -29,6 +29,55 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 _Installed, reset the database, read the documents, ran the suites against the untouched skeleton.
 What did the starting line actually look like, and which failure surprised you?_
 
+### 2026-09-26 · the fork contains more than the hand-out
+
+Expected: a starter with the given plumbing and stubs for the parts I write.
+Observed: the repository root carries `q1-starter/`, `DISCOVERY-RUBRIC.md`, `HARDENING.md` and
+`tools/` next to `starter/`. The root `README.md` describes itself as written for organisers,
+calls `q1-starter/` the reference implementation, and marks the rubric and `tools/` as
+organiser-only. `starter/` is the generated hand-out — every file I am meant to write is a stub
+there.
+Did: emailed Sravya on the task thread asking whether `starter/` is the intended hand-out and
+whether I should delete the rest, since the rules disqualify code copied from the reference
+solution. Building only from `starter/` and the four spec documents until I hear back.
+Open: the write-up has to sit at the repository root, and today it is inside `starter/`. Holding
+the move until they answer.
+
+### 2026-09-26 · the starting line, on Windows
+
+Expected: `npm install`, `npm run db:reset`, then every suite failing on the stubs.
+Observed, in order:
+- `npm install` on Node 24 died in `node-gyp` building `better-sqlite3`. `.nvmrc` says 22; on
+  22.23.3 it took the prebuilt binary (`build/Release/better_sqlite3.node`, no `obj/`).
+- `db:reset` starts with `rm -f`, which is not a command on Windows. Replaced the delete with a
+  `node -e` + `fs.rmSync(..., { force: true })` one-liner (`1a34541`). Ran it twice — second run
+  with the files already gone still exits 0.
+- Wrong prediction: I thought `rm -f` was the only Windows problem. With the delete fixed, the
+  load itself fails: `ENOENT ... open 'C:\C:\Users\Sukuna\Web%20Development\...\db\schema.sql'`.
+  `scripts/load-db.js:10` builds paths with `new URL(p, import.meta.url).pathname` — on Windows
+  that keeps the leading `/C:` and the `%20` from the space in my folder name. Same pattern at
+  `server/index.js:22` (`DIST`). The other scripts pass the URL object straight to
+  `readFileSync`, which is fine, so it is exactly those two lines.
+- Because of it, `check-api.js` and Playwright die in setup, before a single assertion.
+
+Baseline counts against the untouched stubs:
+- `check-jwt.js`: 0 passed, 43 failed — the stub throws `NOT_IMPLEMENTED`.
+- `check-permissions.js`: no count at all; it throws on the first `resolve()` instead of tallying.
+- `npm run personalisation`: 0 / 1, "could not resolve at all".
+- `check-api.js`, Playwright: blocked by the path bug above.
+- Dev server boots; `GET /v1/auth/me` → `404 {"error":{"code":"NOT_FOUND",...}}` — no routes yet.
+
+Two things to remember for later:
+- Playwright's `webServer` waits on `/v1/auth/me` and does not count a `404` as ready, so the UI
+  suite cannot even start until that route exists and answers `401`.
+- It runs with `NODE_ENV=production`, so it serves `dist/`: `npm run build` has to come first,
+  and the `index.js:22` bug would bite there too.
+
+My fixture (`npm run fingerprint`): an extra role `reviewer` (rank 35, baseline `device:list`,
+`device:view`, `user:invite`, `user:remove`) and an extra permission `device:reboot`, allowed on
+one device and denied on the other in org `Ironside Labs`. Neither exists in any document — the
+engine has to learn both from the tables.
+
 ## Phase 1 — token verification
 
 _What did you expect each failure mode to look like before you ran it? Which one behaved
