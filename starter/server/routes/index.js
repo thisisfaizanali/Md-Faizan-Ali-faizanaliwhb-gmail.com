@@ -9,6 +9,7 @@ import { auditDenials } from '../audit.js';
 import { registerAuthRoutes } from './auth.js';
 import { registerOrgRoutes } from './orgs.js';
 import { registerInviteRoutes } from './invites.js';
+import { registerDeviceRoutes } from './devices.js';
 
 export function registerRoutes(router, deps) {
   const { db } = deps;
@@ -22,4 +23,5 @@ export function registerRoutes(router, deps) {
   registerAuthRoutes(r, deps);
   registerOrgRoutes(r, deps);
   registerInviteRoutes(r, deps);
+  registerDeviceRoutes(r, deps);
 }
