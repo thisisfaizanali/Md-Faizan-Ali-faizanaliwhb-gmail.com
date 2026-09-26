@@ -170,6 +170,36 @@ Untested so far — noted for Phase 8.
 _Anything you had to work out that no document states. Invite lifecycle states are a common
 source of this._
 
+### 2026-09-26 · the last-owner demote I planned to test can't happen
+
+Planned an edge case: demote the last owner, expect `409 LAST_OWNER`. It is unreachable. Only an
+owner may modify an owner (check-api needs that, see DECISIONS), and demoting yourself is
+`SELF_ROLE_CHANGE` first. So whoever demotes an owner is a *second* owner. Same for suspend and
+remove. The only path to `LAST_OWNER` is the sole owner leaving via `DELETE /members/me`.
+`check-edges.js` tests it there; `assertNotLastOwner` still guards every path.
+
+### 2026-09-26 · removal has to revoke grants, or a rehire gets them back
+
+`memberships` is `UNIQUE (org_id, user_id)`, so re-inviting a removed person has to reuse their
+old row rather than add one. Their grants in that org still point at the same user id. Without
+touching them, rehiring someone would silently restore every exception they had when they left.
+`removeMember` in `server/routes/orgs.js` sets `revoked_at` on their grants in that org
+(`41decaf`); `check-edges.js` asserts it.
+
+### 2026-09-26 · 404 before 401 on an unknown route
+
+`check-api.js`: `no token -> 401` got `404`. `GET /orgs/org_acme/devices` isn't registered yet,
+and `server/index.js` matches the route before it authenticates. Left it: the check passes once
+the devices route exists. Side effect worth knowing: an anonymous caller can tell registered
+routes (401) from unregistered ones (404).
+
+### 2026-09-26 · a 500 found by reading, not by a test
+
+`PATCH /members/:userId` with no `role` in the body: `assertCanModify` takes a missing `newRole`
+to mean "not a role change" and skips role validation, then `UPDATE memberships SET role = ?`
+binds `undefined`. Checked better-sqlite3 directly: `SQLITE_CONSTRAINT_NOTNULL` → unhandled →
+`500`. `check-edges.js` (42/42) never sends a PATCH without a role. Fix and test to come.
+
 ## Phase 4 — devices and grants
 
 _What happens at the boundary where two grants disagree, or where a grant's scope and the

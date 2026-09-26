@@ -79,6 +79,36 @@ comply and keep the provenance in `source` only.
 
 ---
 
+### Removing a member revokes their grants in that org
+
+**What I chose:** `removeMember` (`server/routes/orgs.js`, `41decaf`) sets `revoked_at` on the
+user's unrevoked grants in the org, in the same transaction as the status change, the pv bump and
+ending their sessions. Suspension leaves grants alone.
+**Why:** `memberships` is `UNIQUE (org_id, user_id)`, so a re-invite has to reactivate the
+removed row. Grants key on `(org_id, user_id)` too, so anything left unrevoked comes back the
+moment the person is rehired (BUILD-LOG, Phase 3). `check-edges.js` asserts the grant is revoked.
+**What I rejected:** leaving grants in place, which AUTH-DATA-MODEL.md §7's removal steps imply.
+Resolution already ignores them while the membership is `removed`, so nothing breaks today — the
+bug only appears on rehire, as authority nobody re-approved.
+**What would change my mind:** a requirement that a rehire restores prior access. I'd still
+revoke, and make restoring them an explicit action rather than a side effect.
+
+---
+
+### Suspension is reversible without touching grants; removal is not
+
+**What I chose:** suspend flips `status` and bumps pv; reinstate flips it back. Grants,
+role and history stay. Remove sets `removed` and revokes grants. Both end the user's sessions in
+that org (`user_suspended` vs `membership_removed`).
+**Why:** check-api suspends Sam and then reinstates her with `200`, expecting her back as she was.
+Suspension is a pause; removal is the end of a tenancy.
+**What I rejected:** revoking grants on suspension too, for symmetry. Reinstating would then
+restore a different person from the one who was suspended.
+**What would change my mind:** long suspensions being used as a soft removal in practice. Then a
+suspension older than some bound should expire into a removal.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
@@ -143,6 +173,13 @@ cannot tell the difference between a decision and an oversight.
   suspension is `memberships.status` — per org. AUTH-DATA-MODEL.md §7 agrees with the schema:
   suspension ends sessions "in that org". Built against the schema: suspended in Acme, still
   active in Globex.
+
+- **Owners modifying owners.** PERMISSIONS.md §6: "modify a user of equal role (admin → admin) →
+  `403`". `check-api.js`: "demoting a NON-last owner is allowed" — Dana (owner) demotes
+  `usr_acme_owner` (owner) and expects `200`. Built against the test: equal rank is refused,
+  except that an owner may modify another owner (`assertCanModify` in `server/lifecycle.js`).
+  Without that exception, nobody could ever demote or remove an owner except the owner
+  themselves.
 
 ## Deliberately not built
 
