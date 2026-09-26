@@ -167,5 +167,12 @@ export function assertMayGrant(db, ctx, patterns, deviceId = null) {
 // The compound check: session:start AND the permission for the requested mode, and a
 // refusal must distinguish WHICH of the two was missing.
 export function assertCanStartSession(db, ctx, mode, deviceId) {
-  throw todo('assertCanStartSession');
+  if (!Object.hasOwn(MODE_PERMISSION, mode)) throw badRequest('unknown session mode');
+  if (!can(db, ctx, 'session:start', deviceId)) {
+    throw forbidden('missing permission session:start on this device', 'missing_permission');
+  }
+  const needed = MODE_PERMISSION[mode];
+  if (!can(db, ctx, needed, deviceId)) {
+    throw forbidden(`missing permission ${needed} on this device`, 'missing_device_permission');
+  }
 }
