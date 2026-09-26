@@ -13,17 +13,26 @@
 // Schema columns: id, org_id (NOT NULL), actor_id, action, target_type, target_id,
 // result ('allow'|'deny'), reason_code, request_id, at.
 
-const todo = (name) =>
-  Object.assign(
-    new Error(`TODO: server/audit.js — ${name}() is yours to write (BRIEF.md §3).`),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+import { newId } from './db.js';
+import { HttpError } from './http.js';
 
-export function audit(db, { orgId, actorId, action, targetType, targetId, result, reasonCode, requestId }) {
-  throw todo('audit');
+// One row. orgId defaults to the caller's org (org creation passes the new org's id).
+// Never pass a token, password or cookie in any field.
+export function audit(db, ctx, { orgId = ctx.orgId, action, targetType = null, targetId = null, result = 'allow', reasonCode = null }) {
+  db.prepare(
+    `INSERT INTO audit_events (id, org_id, actor_id, action, target_type, target_id, result, reason_code, request_id)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run(newId('aud'), orgId, ctx.userId ?? null, action, targetType, targetId, result, reasonCode, ctx.requestId ?? null);
 }
 
-// Run fn(); if it refuses with a permission error, record the denial before rethrowing.
-export function auditDenials(db, ctx, meta, fn) {
-  throw todo('auditDenials');
+// Run fn(); if it refuses with a 403 in a known org, record the denial before rethrowing.
+export async function auditDenials(db, ctx, meta, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof HttpError && err.status === 403 && ctx.orgId) {
+      audit(db, ctx, { ...meta, result: 'deny', reasonCode: err.reason });
+    }
+    throw err;
+  }
 }
