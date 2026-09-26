@@ -3,7 +3,7 @@
 import { send, badRequest, notFound, conflict } from '../http.js';
 import { newId, nowIso, bumpPermVersion } from '../db.js';
 import { assertCan, resolve } from '../permissions.js';
-import { OWNER, assertCanModify, assertNotLastOwner, endActiveSessions } from '../lifecycle.js';
+import { OWNER, assertRoleExists, assertCanModify, assertNotLastOwner, endActiveSessions } from '../lifecycle.js';
 import { audit } from '../audit.js';
 
 const THEMES = ['cobalt', 'ember', 'jade', 'violet', 'amber', 'slate'];
@@ -131,6 +131,7 @@ export function registerOrgRoutes(r, { db }) {
     assertCan(db, ctx, 'user:role:update');
     const target = memberOr404(db, ctx.orgId, p.userId);
     const role = ctx.body.role;
+    assertRoleExists(db, role); // a missing role is a 400, not "not a role change"
     assertCanModify(db, ctx, target, role);
     db.transaction(() => {
       if (role !== OWNER) assertNotLastOwner(db, ctx.orgId, target.user_id);

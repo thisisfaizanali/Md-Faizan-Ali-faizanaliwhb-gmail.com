@@ -104,6 +104,10 @@ check('admin confers owner -> 403',
   (await call('PATCH', '/orgs/org_acme/members/usr_sam', { token: adminTok, body: { role: 'owner' } })).status, 403);
 check('unknown role -> 400',
   (await call('PATCH', '/orgs/org_acme/members/usr_sam', { token: danaTok, body: { role: 'wizard' } })).status, 400);
+check('role change with no role -> 400',
+  (await call('PATCH', '/orgs/org_acme/members/usr_sam', { token: danaTok, body: {} })).status, 400);
+check('role change to role nope -> 400',
+  (await call('PATCH', '/orgs/org_acme/members/usr_sam', { token: danaTok, body: { role: 'nope' } })).status, 400);
 check('owner demotes another owner -> 200',
   (await call('PATCH', '/orgs/org_acme/members/usr_acme_owner', { token: danaTok, body: { role: 'admin' } })).status, 200);
 check('not a member -> 404',
