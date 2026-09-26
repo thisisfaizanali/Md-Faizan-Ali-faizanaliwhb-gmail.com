@@ -30,6 +30,22 @@ dependency for something `fs.rmSync(f, { force: true })` does in one line.
 
 ---
 
+### A token's signature is compared as its canonical text, not as decoded bytes
+
+**What I chose:** `verifyAccessToken` re-encodes the expected HMAC as base64url and compares it
+with the signature segment as strings (lengths first, then `timingSafeEqual`), in
+`server/auth.js` (`36dfb57`).
+**Why:** a signature ending `MOk` and the same signature ending `MOl` decode to identical bytes —
+the last base64url character of a 32-byte value carries 2 unused bits (logged under Phase 1).
+**What I rejected:** decoding the segment and comparing bytes, which is the common way to write it.
+It accepts both spellings, so one signature yields several distinct valid token strings. Anything
+that ever keys on the raw token — a denylist, a log line, a replay check — would see them as
+different tokens.
+**What would change my mind:** an HS256 issuer that emits non-canonical base64url. We only verify
+our own tokens, and `signToken` always emits the canonical form, so I don't expect one.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**

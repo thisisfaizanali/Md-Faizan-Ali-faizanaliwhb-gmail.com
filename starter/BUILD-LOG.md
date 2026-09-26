@@ -101,6 +101,28 @@ Now the failures are real ones:
 _What did you expect each failure mode to look like before you ran it? Which one behaved
 differently from your expectation, and what did that tell you?_
 
+### 2026-09-26 · Buffer's base64url decoder does not reject junk
+
+Expected: a segment with a stray character to fail decoding and fall into the `catch`.
+Observed: `Buffer.from('eyJ!hIjoxfQ', 'base64url')` → `{"a":1}`. The `!` is silently dropped.
+So "decode, catch errors" would have accepted a header or payload with junk in it.
+Changed: `decodeObject` in `server/auth.js` tests `^[A-Za-z0-9_-]+$` before decoding.
+
+### 2026-09-26 · two different signatures, same bytes
+
+The last character of a 43-char base64url signature carries 2 unused bits. A signature ending
+`MOk` and the same one ending `MOl` decode to identical bytes (checked with `Buffer.equals`).
+Comparing decoded bytes would accept both spellings — two distinct token strings, one signature.
+`verifyAccessToken` compares the canonical base64url string instead, lengths first, then
+`timingSafeEqual`.
+
+### 2026-09-26 · check-jwt.js green on the first run
+
+`36dfb57`: 43 passed, 0 failed, first run. Header is read only to reject; signature is checked
+before any claim is read. The suite can't tell those orders apart — every failure is the same
+401 — and it never feeds it a non-object payload, a non-string `jti`, or an array `aud`. The
+code rejects all three; nothing tests them yet. Noted for Phase 8.
+
 ## Phase 2 — caller context and the resolution engine
 
 _This is where most people's first model is wrong. Write down the model you started with, the
