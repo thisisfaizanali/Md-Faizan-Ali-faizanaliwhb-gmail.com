@@ -1,7 +1,7 @@
 // JWT and password hashing, hand-rolled on node:crypto.
 //
-// Nothing here is hidden behind a library on purpose. Signing is done for you;
-// `verifyAccessToken` below is a stub you have to implement. The rules it must
+// Nothing here is hidden behind a library on purpose. Signing is the hand-out's;
+// `verifyAccessToken` below is the verifier. The rules it must
 // enforce are in AUTH-DATA-MODEL.md §10 and listed above verifyAccessToken.
 //
 // The payload is base64, NOT encrypted. Never put a secret in it.
