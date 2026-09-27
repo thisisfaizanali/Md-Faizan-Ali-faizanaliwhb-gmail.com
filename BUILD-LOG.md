@@ -342,16 +342,16 @@ redeeming. My first cut re-ran the boot refresh when the invite screen cleared �
 used that fresh cookie and landed in the shell. The boot refresh now runs on first mount only, and
 the invite page swaps the URL to `/` and renders the login form directly.
 
-### 2026-09-27 · I specified an inline form; the test drives a prompt
+### 2026-09-27 · I built an inline form; the test drives a prompt
 
-First Playwright run: 23/25. One failure was mine: I told the build to use an inline name form for
-Create organization, having not read `ui.spec.js:270`, which answers `window.prompt` with
+First Playwright run: 23/25. One failure was mine: I built Create organization as an inline name
+form, having not read the test at `ui.spec.js:269`, which answers `window.prompt` with
 `page.once('dialog', ...)`. The shipped test fixes the mechanism, so create-org uses `prompt`;
 every other confirmation stays inline.
 
 ### 2026-09-27 · the UI suite settles the empty-org question
 
-`ui.spec.js:270` creates an org — zero devices — and expects all six cards: "A brand-new owner holds
+`ui.spec.js:269` creates an org — zero devices — and expects all six cards: "A brand-new owner holds
 every permission". Under the literal "union across all devices", every org-level answer in an empty
 org is deny and none of the six would render. Independent confirmation of the Phase 2 call.
 
@@ -438,6 +438,14 @@ mid-session. Nothing surprised me.
 outside the repo on Node v22.23.3: `npm ci` clean, `db:reset`, then check-jwt 43/43,
 check-permissions 35/35, check-api 66/66, check-edges 219/219, personalisation 18/18, build, UI
 25/25. `npm run dev`: `/` → 200 HTML, `/v1/auth/me` → 401.
+
+### 2026-09-27 · no reply, so only the write-up moved
+
+Phase 0 left the move open until the organisers answered. No reply by the final day. The rules
+need `BUILD-LOG.md` and `DECISIONS.md` at the repository root, so I `git mv`'d exactly those two
+(`9d8417e`, a pure rename — `git log --follow` still shows every entry's commit). The app stays in
+`starter/`, and every file that came with the fork, including the reference material, is where it
+was. Changing their files without an answer wasn't my call to make.
 
 ## Open threads
 
