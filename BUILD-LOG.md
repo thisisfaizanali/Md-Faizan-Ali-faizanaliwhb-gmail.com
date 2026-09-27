@@ -432,6 +432,13 @@ user in a separate window, a busy device, a demotion that leaves a running sessi
 suspension that ends it, an invite redeemed, a reload, the audit log, and the server stopped
 mid-session. Nothing surprised me.
 
+### 2026-09-27 · final check from a fresh clone on Node 22
+
+`.nvmrc` pins 22 and better-sqlite3 moved to 12 during Phase 8, so the last gate was a clean clone
+outside the repo on Node v22.23.3: `npm ci` clean, `db:reset`, then check-jwt 43/43,
+check-permissions 35/35, check-api 66/66, check-edges 219/219, personalisation 18/18, build, UI
+25/25. `npm run dev`: `/` → 200 HTML, `/v1/auth/me` → 401.
+
 ## Open threads
 
 _Things you know are wrong, unfinished, or that you would do differently with another day. Listing
