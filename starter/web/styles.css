@@ -1,0 +1,81 @@
+:root {
+  --ink: #1d2230;
+  --muted: #5b6270;
+  --line: #d9dde5;
+  --surface: #ffffff;
+  --page: #f4f5f8;
+  --danger: #b42318;
+  --ok: #1e6b3a;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--ink);
+  background: var(--page);
+  line-height: 1.45;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+h1, h2 { margin: 0 0 12px; }
+h2 { font-size: 1.15rem; }
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button[aria-current] { font-weight: 600; border-color: var(--ink); }
+button.danger { color: var(--danger); border-color: var(--danger); }
+
+input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.centered { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
+.login { width: min(380px, 100%); display: grid; gap: 12px; }
+.login label { display: grid; gap: 4px; font-size: 0.9rem; color: var(--muted); }
+
+.error { color: var(--danger); background: #fdecea; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+.notice { color: var(--ok); background: #e8f4ec; border-radius: 6px; padding: 8px 12px; margin: 8px 0; }
+
+.inline { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; }
+
+/* Per-org identity: the shell's background comes from the org's theme. Palette themes
+   have a rule each; any other theme sets --org-bg inline from a hash of its name. */
+.shell { min-height: 100vh; background: var(--org-bg, var(--page)); }
+.shell[data-org-theme='cobalt'] { --org-bg: #e3ecfb; --accent: #1f4fbf; }
+.shell[data-org-theme='ember']  { --org-bg: #fbe9e1; --accent: #c2410c; }
+.shell[data-org-theme='jade']   { --org-bg: #e1f5ec; --accent: #0f7a52; }
+.shell[data-org-theme='violet'] { --org-bg: #eee6fb; --accent: #6d3fc0; }
+.shell[data-org-theme='amber']  { --org-bg: #fbf1d9; --accent: #a16207; }
+.shell[data-org-theme='slate']  { --org-bg: #e7eaef; --accent: #475569; }
+
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 20px; background: var(--surface); border-bottom: 4px solid var(--accent, var(--ink));
+}
+.org-name { font-size: 1.1rem; margin-right: 12px; }
+.role, .who { color: var(--muted); display: inline-flex; gap: 8px; align-items: center; }
+
+.orgs { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px; }
+.body { display: grid; grid-template-columns: 180px 1fr; gap: 16px; padding: 0 20px 20px; }
+.cards { display: grid; align-content: start; gap: 6px; }
+.content { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; overflow-x: auto; }
+.view-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+@media (max-width: 640px) {
+  .body { grid-template-columns: 1fr; }
+  .cards { grid-auto-flow: column; overflow-x: auto; }
+}

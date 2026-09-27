@@ -1,34 +1,63 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { refresh, subscribe } from './api.js';
+import { Login } from './Login.jsx';
+import { Invite } from './Invite.jsx';
+import { Shell } from './Shell.jsx';
+import './styles.css';
 
-// The starter shell. Replace this with the console.
-//
-// The console contract (UI-INVENTORY.md) is what the shipped UI tests read, and it is
-// fixed: elements are present or ABSENT, never disabled, and every permission-gated
-// element is resolved by the SERVER. There is no role-to-permission table under web/.
-//
-// The attributes the tests read:
-//   <div    data-testid="app-shell"  data-org-id="org_acme" data-org-theme="cobalt">
-//   <button data-testid="org-option" data-org-id="org_globex">
-//   <tr     data-testid="device-row" data-device-id="dev_lab_mac_01">
-//   <tr     data-testid="user-row"   data-user-id="usr_sam">
-//   <button data-permission="device:control" data-state="unlocked">
-//
-// Everything else — layout, visual language, per-org identity — is yours.
+// The console. Everything permission-gated is resolved by the SERVER: this code renders the
+// resolved sets it is given and holds no role-to-permission table (UI-INVENTORY.md).
 
-function Placeholder() {
-  return (
-    <main style={{ fontFamily: 'ui-sans-serif, system-ui, sans-serif', padding: 32, lineHeight: 1.5 }}>
-      <h1 style={{ margin: '0 0 4px' }}>RemoteOps</h1>
-      <p style={{ color: '#5b6270', margin: 0 }}>
-        Starter shell. The API and the console are yours to write — see <code>README.md</code>.
-      </p>
-      <p style={{ color: '#5b6270', margin: '16px 0 0', fontSize: 14 }}>
-        First: <code>server/auth.js</code>, then <code>server/context.js</code> and{' '}
-        <code>server/permissions.js</code>.
-      </p>
-    </main>
-  );
+const inviteToken = () => /^\/invite\/([^/]+)$/.exec(window.location.pathname)?.[1] ?? null;
+
+function App() {
+  const [invite, setInvite] = useState(inviteToken);
+  // 'booting' | 'signed-out' | 'signed-in'
+  const [phase, setPhase] = useState(invite ? 'signed-out' : 'booting');
+  const [session, setSession] = useState(null);
+  const [bootError, setBootError] = useState(null);
+
+  useEffect(() => subscribe((shape) => {
+    setSession(shape);
+    setPhase('signed-in');
+  }), []);
+
+  // Resume from the refresh cookie, once, on first load only: after an invite is accepted
+  // the user signs in explicitly. The API module dedupes concurrent refreshes, so
+  // StrictMode's double effect cannot replay the cookie.
+  useEffect(() => {
+    if (inviteToken()) return;
+    refresh().catch((err) => {
+      if (err.status !== 401) setBootError(err);
+      setPhase('signed-out');
+    });
+  }, []);
+
+  if (invite) {
+    // Accepting does not sign in through the cookie: drop the token from the URL and show
+    // the sign-in form.
+    const accepted = () => {
+      window.history.replaceState(null, '', '/');
+      setInvite(null);
+      setPhase('signed-out');
+    };
+    return <Invite token={decodeURIComponent(invite)} onAccepted={accepted} />;
+  }
+  if (phase === 'booting') return <main className="centered"><p>Loading…</p></main>;
+  if (phase === 'signed-out' || !session) return <Login initialError={bootError} />;
+
+  const signedOut = () => {
+    setSession(null);
+    setBootError(null);
+    setPhase('signed-out');
+  };
+  // Keyed on the org: nothing from the previous org survives a switch.
+  return <Shell key={session.org.id} session={session} onSignedOut={signedOut} />;
 }
 
-createRoot(document.getElementById('root')).render(<Placeholder />);
+createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
