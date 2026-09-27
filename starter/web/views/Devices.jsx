@@ -1,38 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { api } from '../api.js';
-import { Gated, ErrorNote, Notice } from '../ui.jsx';
+import { Gated, ErrorNote, Notice, useResource, attempt, formValue } from '../ui.jsx';
 
-const START_MODES = [
-  { mode: 'view', perm: 'device:view', testId: 'start-view', label: 'View' },
-  { mode: 'control', perm: 'device:control', testId: 'start-control', label: 'Control' },
-  { mode: 'terminal', perm: 'device:terminal', testId: 'start-terminal', label: 'Terminal' },
+// The row entries and the permission that governs each (UI-INVENTORY.md §3). Used for the
+// buttons and for explaining the ones that are absent.
+const ROW_ACTIONS = [
+  { perm: 'device:view', testId: 'start-view', label: 'View', mode: 'view' },
+  { perm: 'device:control', testId: 'start-control', label: 'Control', mode: 'control' },
+  { perm: 'device:terminal', testId: 'start-terminal', label: 'Terminal', mode: 'terminal' },
+  { perm: 'device:file_transfer', testId: 'transfer-files', label: 'Transfer files' },
+  { perm: 'device:update', testId: 'rename-device', label: 'Rename' },
+  { perm: 'device:provision', testId: 'decommission-device', label: 'Decommission' },
 ];
 
+const WHY = { implicit: 'not granted', explicit_deny: 'denied by a grant', expired_grant: 'access expired' };
+
 // Fetches on every mount: presence comes from the response, never from a cached copy.
-export function Devices({ orgId, permissions }) {
-  const [devices, setDevices] = useState(null);
-  const [error, setError] = useState(null);
+export function Devices({ orgId, permissions, report }) {
   const [notice, setNotice] = useState(null);
+  const load = useCallback(() => api('GET', `/orgs/${orgId}/devices`).then((b) => b.devices), [orgId]);
+  const [devices, reload] = useResource(load, report);
 
-  const load = useCallback(() => {
-    let live = true;
-    api('GET', `/orgs/${orgId}/devices`)
-      .then((body) => live && setDevices(body.devices))
-      .catch((err) => live && setError(err));
-    return () => { live = false; };
-  }, [orgId]);
-  useEffect(load, [load]);
-
-  // Every action reports its outcome: the server's message on failure.
+  // Row actions report through the shell banner; success shows here and refetches.
   const run = async (action, success) => {
-    setError(null);
+    report(null);
     setNotice(null);
-    try {
-      const result = await action();
-      setNotice(success(result));
-      load();
-    } catch (err) {
-      setError(err);
+    const r = await attempt(action, report);
+    if (r.ok) {
+      setNotice(success(r.value));
+      reload();
     }
   };
 
@@ -40,11 +36,10 @@ export function Devices({ orgId, permissions }) {
     <section>
       <header className="view-head">
         <h2>Devices</h2>
-        <AddDevice orgId={orgId} permissions={permissions} run={run} />
+        <AddDevice orgId={orgId} permissions={permissions} onAdded={(d) => { setNotice(`Added ${d.name}.`); reload(); }} />
       </header>
-      <ErrorNote error={error} />
       <Notice>{notice}</Notice>
-      {devices === null && !error && <p>Loading devices…</p>}
+      {devices === null && <p>Loading devices…</p>}
       {devices?.length === 0 && <p data-testid="devices-empty">No devices in this organization yet.</p>}
       {devices?.length > 0 && (
         <table>
@@ -62,8 +57,9 @@ export function Devices({ orgId, permissions }) {
   );
 }
 
-function AddDevice({ orgId, permissions, run }) {
+function AddDevice({ orgId, permissions, onAdded }) {
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState(null);
   if (!open) {
     return (
       <Gated permissions={permissions} perm="device:provision" data-testid="add-device" onClick={() => setOpen(true)}>
@@ -71,13 +67,15 @@ function AddDevice({ orgId, permissions, run }) {
       </Gated>
     );
   }
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    const form = new FormData(e.currentTarget);
-    run(
-      () => api('POST', `/orgs/${orgId}/devices`, { name: form.get('name'), kind: String(form.get('kind')).trim() }),
-      (d) => { setOpen(false); return `Added ${d.name}.`; },
-    );
+    setError(null);
+    const body = { name: formValue(e.currentTarget, 'name'), kind: formValue(e.currentTarget, 'kind') };
+    const r = await attempt(() => api('POST', `/orgs/${orgId}/devices`, body), setError);
+    if (r.ok) {
+      setOpen(false);
+      onAdded(r.value);
+    }
   };
   return (
     <form className="inline" onSubmit={submit}>
@@ -86,6 +84,7 @@ function AddDevice({ orgId, permissions, run }) {
       <input name="kind" placeholder="Kind, e.g. linux" aria-label="Device kind" />
       <button type="submit">Add</button>
       <button type="button" onClick={() => setOpen(false)}>Cancel</button>
+      <ErrorNote error={error} />
     </form>
   );
 }
@@ -93,55 +92,65 @@ function AddDevice({ orgId, permissions, run }) {
 function DeviceRow({ orgId, device, run, setNotice }) {
   const [mode, setMode] = useState(null); // null | 'rename' | 'confirm-decommission'
   const p = device.permissions;
+  const path = `/orgs/${orgId}/devices/${device.id}`;
 
+  const handlers = {
+    'start-view': () => start('view'),
+    'start-control': () => start('control'),
+    'start-terminal': () => start('terminal'),
+    'transfer-files': () => setNotice('File transfer is out of scope — sessions here are records.'),
+    'rename-device': () => setMode('rename'),
+    'decommission-device': () => setMode('confirm-decommission'),
+  };
   const start = (m) => run(
     () => api('POST', `/orgs/${orgId}/sessions`, { deviceId: device.id, mode: m }),
     (s) => `Started a ${s.mode} session on ${device.name} (${s.id}).`,
   );
-
   const rename = (e) => {
     e.preventDefault();
-    const name = new FormData(e.currentTarget).get('name');
-    run(() => api('PATCH', `/orgs/${orgId}/devices/${device.id}`, { name }), (d) => `Renamed to ${d.name}.`);
+    const name = formValue(e.currentTarget, 'name');
+    run(() => api('PATCH', path, { name }), (d) => { setMode(null); return `Renamed to ${d.name}.`; });
   };
+  const decommission = () => run(() => api('DELETE', path), () => `Decommissioned ${device.name}.`);
 
-  const decommission = () => run(
-    () => api('DELETE', `/orgs/${orgId}/devices/${device.id}`),
-    () => `Decommissioned ${device.name}.`,
-  );
+  const denied = ROW_ACTIONS.filter((a) => p[a.perm]?.effect !== 'allow');
 
   return (
     <tr data-testid="device-row" data-device-id={device.id}>
       <td>{device.name}</td>
       <td>{device.kind}</td>
       <td>{device.online ? 'Online' : 'Offline'}</td>
-      <td className="actions">
-        {START_MODES.map(({ mode: m, perm, testId, label }) => (
-          <Gated key={m} permissions={p} perm={perm} data-testid={testId} onClick={() => start(m)}>{label}</Gated>
-        ))}
-        <Gated permissions={p} perm="device:file_transfer" data-testid="transfer-files"
-          onClick={() => setNotice('File transfer is out of scope — sessions here are records.')}>
-          Transfer files
-        </Gated>
-        {mode === 'rename' ? (
+      <td>
+        <div className="actions">
+          {ROW_ACTIONS.map((a) => (
+            <Gated key={a.testId} permissions={p} perm={a.perm} data-testid={a.testId} onClick={handlers[a.testId]}>
+              {a.label}
+            </Gated>
+          ))}
+        </div>
+        {mode === 'rename' && (
           <form className="inline" onSubmit={rename}>
             <input name="name" defaultValue={device.name} aria-label="New device name" />
             <button type="submit">Save</button>
             <button type="button" onClick={() => setMode(null)}>Cancel</button>
           </form>
-        ) : (
-          <Gated permissions={p} perm="device:update" data-testid="rename-device" onClick={() => setMode('rename')}>Rename</Gated>
         )}
-        {mode === 'confirm-decommission' ? (
+        {mode === 'confirm-decommission' && (
           <span className="inline">
-            Decommission {device.name}?
+            Decommission {device.name}? Its sessions end.
             <button type="button" className="danger" onClick={decommission}>Confirm</button>
             <button type="button" onClick={() => setMode(null)}>Cancel</button>
           </span>
-        ) : (
-          <Gated permissions={p} perm="device:provision" data-testid="decommission-device" onClick={() => setMode('confirm-decommission')}>
-            Decommission
-          </Gated>
+        )}
+        {denied.length > 0 && (
+          <details className="why">
+            <summary>Why can't I…</summary>
+            <ul>
+              {denied.map((a) => (
+                <li key={a.perm}>{a.label}: {WHY[p[a.perm]?.reason] ?? 'not available'}</li>
+              ))}
+            </ul>
+          </details>
         )}
       </td>
     </tr>

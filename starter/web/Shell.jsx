@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { api, switchOrg, refresh, reloadSession, logout } from './api.js';
-import { allowed, ErrorNote } from './ui.jsx';
+import { allowed, ErrorNote, attempt } from './ui.jsx';
 import { Devices } from './views/Devices.jsx';
+import { People } from './views/People.jsx';
 import { Grants } from './views/Grants.jsx';
+import { Sessions } from './views/Sessions.jsx';
+import { Audit } from './views/Audit.jsx';
 import { Admin } from './views/Admin.jsx';
 
 // Each card and the permission that governs it (UI-INVENTORY.md §2). This maps UI to
@@ -26,49 +29,49 @@ function hashedColour(theme) {
 }
 
 export function Shell({ session, onSignedOut }) {
-  const { org, orgs, role, permissions, user } = session;
+  const { org, orgs, role, permissions, user, assignableRoles } = session;
   // Each card is present under the first of its permissions the server allows.
   const cards = CARDS
     .map((c) => ({ ...c, perm: c.perms.find((p) => allowed(permissions, p)) }))
     .filter((c) => c.perm);
   const [view, setView] = useState(() => (cards.some((c) => c.key === 'devices') ? 'devices' : cards[0]?.key ?? null));
-  const [error, setError] = useState(null);
-  const [creating, setCreating] = useState(false);
+  // The one banner for failures outside a form.
+  const [requestError, setRequestError] = useState(null);
+  const report = useCallback((err) => setRequestError(err), []);
 
-  const attempt = async (action) => {
-    setError(null);
-    try {
-      await action();
-    } catch (err) {
-      setError(err);
-    }
+  const open = (key) => {
+    setRequestError(null);
+    setView(key);
   };
 
-  const createOrg = (e) => {
-    e.preventDefault();
-    const name = new FormData(e.currentTarget).get('name');
-    attempt(async () => {
+  // The shipped UI test answers a prompt here, so the mechanism is fixed.
+  const createOrg = async () => {
+    const name = window.prompt('Name for the new organization');
+    if (!name?.trim()) return;
+    report(null);
+    await attempt(async () => {
       const created = await api('POST', '/orgs', { name });
-      setCreating(false);
       await switchOrg(created.id);
-    });
+    }, report);
   };
 
-  const signOut = () => attempt(async () => {
-    await logout();
-    onSignedOut();
-  });
+  const signOut = async () => {
+    report(null);
+    const r = await attempt(logout, report);
+    if (r.ok) onSignedOut();
+  };
 
-  // After deleting the active org, land in the earliest remaining one, or sign out.
-  const afterDelete = async () => {
+  // After deleting or leaving the active org, land in the earliest remaining one, or sign out.
+  const landElsewhere = async () => {
     try {
       await refresh(null);
     } catch {
-      await logout();
+      await attempt(logout, () => {});
       onSignedOut();
     }
   };
 
+  const common = { orgId: org.id, me: user.id, permissions, report };
   const themeStyle = PALETTE.has(org.theme) ? undefined : { '--org-bg': hashedColour(org.theme) };
 
   return (
@@ -88,40 +91,34 @@ export function Shell({ session, onSignedOut }) {
         {orgs.map((o) => (
           <button key={o.id} type="button" data-testid="org-option" data-org-id={o.id}
             aria-current={o.id === org.id ? 'true' : undefined}
-            onClick={() => o.id !== org.id && attempt(() => switchOrg(o.id))}>
+            onClick={() => o.id !== org.id && attempt(() => switchOrg(o.id), report)}>
             {o.name}
           </button>
         ))}
-        {creating ? (
-          <form className="inline" onSubmit={createOrg}>
-            <input name="name" placeholder="New organization name" aria-label="New organization name" autoFocus />
-            <button type="submit">Create</button>
-            <button type="button" onClick={() => setCreating(false)}>Cancel</button>
-          </form>
-        ) : (
-          <button type="button" data-testid="create-org" onClick={() => setCreating(true)}>New organization</button>
-        )}
+        <button type="button" data-testid="create-org" onClick={createOrg}>New organization</button>
       </nav>
 
-      <ErrorNote error={error} />
+      <div className="banner">
+        <ErrorNote error={requestError} testId="request-error" />
+      </div>
 
       <div className="body">
         <nav className="cards" aria-label="Sections">
           {cards.map((c) => (
             <button key={c.key} type="button" data-testid={`nav-${c.key}`} data-permission={c.perm} data-state="unlocked"
-              aria-current={view === c.key ? 'page' : undefined} onClick={() => setView(c.key)}>
+              aria-current={view === c.key ? 'page' : undefined} onClick={() => open(c.key)}>
               {c.label}
             </button>
           ))}
         </nav>
         <main className="content">
-          {view === 'devices' && <Devices orgId={org.id} permissions={permissions} />}
-          {view === 'grants' && <Grants orgId={org.id} permissions={permissions} />}
+          {view === 'devices' && <Devices {...common} />}
+          {view === 'people' && <People {...common} assignableRoles={assignableRoles} onLeft={landElsewhere} />}
+          {view === 'grants' && <Grants {...common} />}
+          {view === 'sessions' && <Sessions {...common} />}
+          {view === 'audit' && <Audit {...common} />}
           {view === 'admin' && (
-            <Admin org={org} permissions={permissions} onRenamed={reloadSession} onDeleted={afterDelete} />
-          )}
-          {['people', 'sessions', 'audit'].includes(view) && (
-            <section><h2>{CARDS.find((c) => c.key === view).label}</h2><p>This view is not built yet.</p></section>
+            <Admin org={org} permissions={permissions} report={report} onRenamed={reloadSession} onDeleted={landElsewhere} />
           )}
           {view === null && <p>You have no sections available in this organization.</p>}
         </main>

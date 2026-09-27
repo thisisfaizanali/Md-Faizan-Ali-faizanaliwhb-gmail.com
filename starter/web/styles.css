@@ -79,3 +79,20 @@ th { color: var(--muted); font-weight: 500; font-size: 0.85rem; }
   .body { grid-template-columns: 1fr; }
   .cards { grid-auto-flow: column; overflow-x: auto; }
 }
+
+.banner { padding: 0 20px; }
+.stack { display: grid; gap: 10px; justify-items: start; }
+.reason { opacity: 0.8; font-family: ui-monospace, monospace; font-size: 0.85em; }
+
+.why { margin-top: 6px; font-size: 0.85rem; color: var(--muted); }
+.why summary { cursor: pointer; }
+.why ul { margin: 4px 0 0; padding-left: 18px; }
+
+.grant-form { display: grid; gap: 10px; margin: 12px 0; }
+.grant-form label { display: grid; gap: 4px; font-size: 0.9rem; }
+.grant-form fieldset { border: 1px solid var(--line); border-radius: 6px; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px 12px; }
+.check { display: flex !important; align-items: center; gap: 6px; font-family: ui-monospace, monospace; }
+
+.invites { display: grid; gap: 10px; margin-bottom: 16px; justify-items: start; }
+.link { word-break: break-all; }
