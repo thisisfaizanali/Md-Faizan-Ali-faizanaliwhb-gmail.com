@@ -355,6 +355,24 @@ every other confirmation stays inline.
 every permission". Under the literal "union across all devices", every org-level answer in an empty
 org is deny and none of the six would render. Independent confirmation of the Phase 2 call.
 
+### 2026-09-27 · the role picker can't know role names either
+
+The role select and the invite form need a list of roles, and `web/` is not allowed a role table —
+the personalised `reviewer` role would be missing from any list I typed. The auth shape now carries
+`assignableRoles`, computed on the server by the same rule `assertCanAssign` enforces (`2278a0e`).
+`check-edges.js`: owner's list includes `reviewer`; admin's has no `owner`.
+
+### 2026-09-27 · a helper that couldn't tell failure from 204
+
+The shared `attempt()` wrapper returned `undefined` on failure — which is also what a successful
+`204` (remove, leave, delete) returns. Callers couldn't tell "removed" from "refused". Changed it
+to `{ ok, value }` before the first build.
+
+### 2026-09-27 · UI suite 25/25
+
+`41e56ae`, first run: 25 passed in 16.9s. check-api 66/66, check-edges 145/145, check-permissions
+35/35, personalisation 18/18. Bundle 251.47 kB JS (77.14 kB gzip), up ~12 kB from the foundation.
+
 ## Phase 8 — hardening
 
 _What did you measure, what did you fix, and what did you deliberately leave alone? Anything you
