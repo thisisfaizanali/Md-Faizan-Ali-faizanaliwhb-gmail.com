@@ -95,7 +95,10 @@ export function registerAuthRoutes(r, { db, secret }) {
       throw unauthenticated('invalid refresh token');
     }
 
-    const orgId = firstActiveOrg(db, row.user_id);
+    // Stay in the org the client asked for (a stale token in Globex must not refresh into
+    // Acme); otherwise fall back to the earliest-joined active org.
+    const wanted = ctx.body.orgId;
+    const orgId = activeMemberships(db, row.user_id).some((m) => m.org_id === wanted) ? wanted : firstActiveOrg(db, row.user_id);
     db.transaction(() => {
       db.prepare('UPDATE refresh_tokens SET revoked_at = ? WHERE id = ?').run(nowIso(), row.id);
       issueRefresh(db, res, row.user_id, row.family_id);

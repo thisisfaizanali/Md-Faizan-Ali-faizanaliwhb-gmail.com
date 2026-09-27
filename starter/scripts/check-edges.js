@@ -100,6 +100,13 @@ check('logout -> 204', out.status, 204);
 check('  ...clears the cookie', /^rt=;.*Max-Age=0/.test(out.setCookie ?? ''), true);
 check('refresh after logout -> 401', (await call('POST', '/auth/refresh', { cookie: cookieOf(d2) })).status, 401);
 
+console.log('\n== refresh keeps the requested org ==');
+const d3 = await login('dana@example.test');
+const toGlobex = await call('POST', '/auth/refresh', { cookie: cookieOf(d3), body: { orgId: 'org_globex' } });
+check('refresh {orgId: globex} -> Globex', [toGlobex.status, toGlobex.body?.org?.id], [200, 'org_globex']);
+const toNope = await call('POST', '/auth/refresh', { cookie: cookieOf(toGlobex), body: { orgId: 'org_nope' } });
+check('refresh {orgId: not a member} -> earliest org', [toNope.status, toNope.body?.org?.id], [200, 'org_acme']);
+
 console.log('\n== org switch ==');
 const danaTok = dana.body.token;
 check('token for an org with no membership -> 404', (await call('POST', '/auth/token', { token: danaTok, body: { orgId: 'org_nope' } })).status, 404);
