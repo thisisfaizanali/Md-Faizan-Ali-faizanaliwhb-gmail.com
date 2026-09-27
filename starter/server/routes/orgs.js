@@ -61,7 +61,7 @@ export function registerOrgRoutes(r, { db }) {
       `SELECT o.theme FROM memberships m JOIN organizations o ON o.id = m.org_id
         WHERE m.user_id = ? AND m.status = 'active' AND o.deleted_at IS NULL`
     ).all(ctx.userId).map((r) => r.theme));
-    // ponytail: palette wraps to the first theme once a user is in 6+ orgs.
+    // Palette wraps to the first theme once a user is in 6+ orgs.
     const theme = THEMES.find((t) => !used.has(t)) ?? THEMES[0];
     const id = newId('org');
     db.transaction(() => {

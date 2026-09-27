@@ -2,7 +2,7 @@
 //
 // Nothing here is hidden behind a library on purpose. Signing is done for you;
 // `verifyAccessToken` below is a stub you have to implement. The rules it must
-// enforce are in AUTH-DATA-MODEL.md §10 and restated in the TODO comment.
+// enforce are in AUTH-DATA-MODEL.md §10 and listed above verifyAccessToken.
 //
 // The payload is base64, NOT encrypted. Never put a secret in it.
 
@@ -48,27 +48,14 @@ export function issueAccessToken({ userId, orgId, role, permVersion }, secret) {
 }
 
 // ---------------------------------------------------------------------------
-// TODO — yours to implement.
-//
-// Verify an access token and return its claims, or throw `unauthenticated(...)`.
-// The signing half above is done for you; the verifying half is the exercise.
-//
-// It must reject ALL of the following, each with a 401 UNAUTHENTICATED:
-//
-//   1. a token that is not three dot-separated segments
-//   2. a header or payload that is not valid base64url-encoded JSON
-//   3. a header whose `alg` is anything other than 'HS256', or whose `typ` is not 'JWT'
-//      -- read the header, do NOT trust it. This is the `alg: none` and
-//         algorithm-substitution defence. The constants ALG, ISS and AUD are above.
-//   4. a signature that does not match, compared in constant time
-//   5. an `exp` that is missing, not a number, or <= now (note: <=, not <)
+// verifyAccessToken returns the claims, or throws 401 UNAUTHENTICATED for:
+//   1. anything but three dot-separated segments
+//   2. a header or payload that is not base64url-encoded JSON
+//   3. a header with `alg` other than HS256 or `typ` other than JWT
+//   4. a signature mismatch (canonical base64url, constant-time compare)
+//   5. an `exp` that is missing, not a number, or <= now
 //   6. an `iss` or `aud` that is not ours
 //   7. a missing or empty `jti`
-//
-// On success, return the decoded claims object.
-//
-// AUTH-DATA-MODEL.md §10 lists the failure modes; §2 defines the claim set.
-// `node scripts/check-jwt.js` is the public test suite for this function.
 // ---------------------------------------------------------------------------
 const B64URL = /^[A-Za-z0-9_-]+$/;
 

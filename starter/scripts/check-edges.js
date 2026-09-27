@@ -241,10 +241,10 @@ check('  ...membership active with the invite role',
 check('  ...old grants stay revoked', liveGrants(), 0);
 
 // ===========================================================================
-// M5 — devices and grants, against a fresh fixture (earlier sections removed the viewer
+// Devices and grants, against a fresh fixture (earlier sections removed the viewer
 // and ended the seeded session).
 await restart(8125);
-console.log('\n== M5: device list and visibility (fresh fixture) ==');
+console.log('\n== Devices and grants: device list and visibility (fresh fixture) ==');
 const tokOf = async (email) => (await login(email)).body.token;
 const dana5 = await tokOf('dana@example.test');
 const viewer5 = await tokOf('viewer@acme.test');
@@ -258,7 +258,7 @@ check('device in another org -> 404', (await call('GET', '/orgs/org_acme/devices
 const kiosk = await call('GET', '/orgs/org_acme/devices/dev_kiosk_lobby_01', { token: viewer5 });
 check('viewer GET kiosk-lobby-01 -> 403 explicit_deny', [kiosk.status, kiosk.body?.error?.reason], [403, 'explicit_deny']);
 
-console.log('\n== M5: create, decommission ==');
+console.log('\n== Devices and grants: create, decommission ==');
 const mk = (body, token = dana5) => call('POST', '/orgs/org_acme/devices', { token, body });
 const toaster = await mk({ name: 'toast-01', kind: 'toaster' });
 check("kind 'toaster' -> 400 invalid_kind", [toaster.status, toaster.body?.error?.reason], [400, 'invalid_kind']);
@@ -272,7 +272,7 @@ check('  ...seeded live session ended, device_transferred',
   db.prepare("SELECT state, end_reason FROM sessions WHERE id = 'ses_live_build_server'").get(), { state: 'ended', end_reason: 'device_transferred' });
 check('  ...soft-deleted device -> 404', (await call('GET', '/orgs/org_acme/devices/dev_build_server_01', { token: dana5 })).status, 404);
 
-console.log('\n== M5: transfer ==');
+console.log('\n== Devices and grants: transfer ==');
 const xfer = (id, toOrgId, token = dana5) => call('POST', `/orgs/org_acme/devices/${id}/transfer`, { token, body: { toOrgId } });
 check('to a non-member org -> 404', (await xfer('dev_qa_android_01', 'org_nope')).status, 404);
 check('to an org without provision (Globex viewer) -> 403', (await xfer('dev_qa_android_01', 'org_globex')).status, 403);
@@ -294,7 +294,7 @@ check('  ...its session ended',
 check('  ...its source grant revoked',
   db.prepare('SELECT revoked_at IS NOT NULL AS r FROM grants WHERE id = ?').get(qaGrant.body.id).r, 1);
 
-console.log('\n== M5: grant validation ==');
+console.log('\n== Devices and grants: grant validation ==');
 const grant = (body, token = dana5) => call('POST', '/orgs/org_acme/grants', { token, body });
 const base = { userId: 'usr_acme_viewer', effect: 'allow' };
 const teleport = await grant({ ...base, permissions: ['device:teleport'] });
@@ -315,7 +315,7 @@ const admin5 = await tokOf('admin@acme.test');
 check('admin denies an owner -> 403',
   (await grant({ userId: 'usr_acme_owner', effect: 'deny', permissions: ['device:view'] }, admin5)).status, 403);
 
-console.log('\n== M5: laundering ==');
+console.log('\n== Devices and grants: laundering ==');
 check('setup: owner denies admin device:terminal org-wide',
   (await grant({ userId: 'usr_acme_admin', effect: 'deny', permissions: ['device:terminal'] })).status, 201);
 const adminFresh = await tokOf('admin@acme.test');
@@ -331,7 +331,7 @@ check('Sam grants device:provision ORG-WIDE -> 403',
 check('  ...the same grant scoped to lab-mac-01 -> 201',
   (await grant({ userId: 'usr_acme_viewer', effect: 'allow', permissions: ['device:provision'], deviceId: 'dev_lab_mac_01' }, samFresh)).status, 201);
 
-console.log('\n== M5: revoke ==');
+console.log('\n== Devices and grants: revoke ==');
 const revoke = (id, token = dana5) => call('DELETE', `/orgs/org_acme/grants/${id}`, { token });
 check('revoke -> 204', (await revoke(offset.body.id)).status, 204);
 check('already revoked -> 404', (await revoke(offset.body.id)).status, 404);
@@ -343,7 +343,7 @@ const samGrants = (await call('GET', '/orgs/org_acme/grants?userId=usr_sam', { t
 check('GET grants?userId filters, rows carry status',
   samGrants.length > 0 && samGrants.every((g) => g.userId === 'usr_sam' && g.status === 'active'), true);
 
-console.log('\n== M5: device list query count does not grow ==');
+console.log('\n== Devices and grants: device list query count does not grow ==');
 {
   // In-process, so every statement the handler runs can be counted.
   let n = 0;
@@ -376,9 +376,9 @@ console.log('\n== M5: device list query count does not grow ==');
 }
 
 // ===========================================================================
-// M6 — sessions, audit completion, engine fixes. Fresh fixture again.
+// Sessions, audit completion, engine fixes. Fresh fixture again.
 await restart(8126);
-console.log('\n== M6: session start, the compound check ==');
+console.log('\n== Sessions: session start, the compound check ==');
 const dana6 = await tokOf('dana@example.test');
 let viewer6 = await tokOf('viewer@acme.test');
 const sam6 = await tokOf('sam@example.test');
@@ -392,7 +392,7 @@ check('viewer: control on lab-mac-01 -> 403 missing_device_permission', [ctl.sta
 check("mode 'shell' -> 400", (await start(viewer6, 'dev_lab_mac_01', 'shell')).status, 400);
 check('device in another org -> 404', (await start(dana6, 'dev_globex_desk_01', 'view')).status, 404);
 
-console.log('\n== M6: exclusivity ==');
+console.log('\n== Sessions: exclusivity ==');
 const held1 = await start(sam6, 'dev_lab_win_01', 'control');
 check('control -> 201', held1.status, 201);
 const busy = await start(dana6, 'dev_lab_win_01', 'control');
@@ -403,14 +403,14 @@ check('terminal while control is held -> 409', (await start(dana6, 'dev_lab_win_
 const pair = await Promise.all([1, 2].map(() => start(dana6, 'dev_qa_android_01', 'control')));
 check('two control starts in parallel -> one 201, one 409', pair.map((x) => x.status).sort(), [201, 409]);
 
-console.log('\n== M6: expiry releases the device ==');
+console.log('\n== Sessions: expiry releases the device ==');
 db.prepare('UPDATE sessions SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), held1.body.id);
 const after = await start(dana6, 'dev_lab_win_01', 'control');
 check('expired holder: new control -> 201', after.status, 201);
 check('  ...old one ended, session_expired',
   db.prepare('SELECT state, end_reason FROM sessions WHERE id = ?').get(held1.body.id), { state: 'ended', end_reason: 'session_expired' });
 
-console.log('\n== M6: authority snapshot and grandfathering ==');
+console.log('\n== Sessions: authority snapshot and grandfathering ==');
 check("viewer's session snapshot names the grant", sView.body.authorized_by.grantIds, ['grt_viewer_start_session']);
 const ownerSnap = pair.find((x) => x.status === 201).body.authorized_by;
 check("owner's snapshot: role owner, no grants", [ownerSnap.role, ownerSnap.grantIds], ['owner', []]);
@@ -420,14 +420,14 @@ check('  ...the running session stays active',
 viewer6 = await tokOf('viewer@acme.test');
 check('  ...the next start -> 403', (await start(viewer6, 'dev_lab_mac_01', 'view')).status, 403);
 
-console.log('\n== M6: org TTL ==');
+console.log('\n== Sessions: org TTL ==');
 check('PATCH maxSessionMinutes 5 -> 200',
   (await call('PATCH', '/orgs/org_acme', { token: dana6, body: { maxSessionMinutes: 5 } })).status, 200);
 const short = (await start(dana6, 'dev_lab_mac_01', 'view')).body;
 const ttl = (Date.parse(short.expires_at) - Date.parse(short.started_at)) / 1000;
 check('  ...new session expires started_at + 5 min', Math.abs(ttl - 300) <= 2, true);
 
-console.log('\n== M6: GET /sessions/:id ==');
+console.log('\n== Sessions: GET /sessions/:id ==');
 check('participant reads own session -> 200', (await call('GET', `/sessions/${sView.body.id}`, { token: viewer6 })).status, 200);
 check('setup: org-wide deny session:view on Sam',
   (await call('POST', '/orgs/org_acme/grants', { token: dana6, body: { userId: 'usr_sam', effect: 'deny', permissions: ['session:view'] } })).status, 201);
@@ -438,7 +438,7 @@ db.prepare(`INSERT INTO sessions (id, org_id, user_id, device_id, mode, state, a
   .run(new Date(Date.now() + 36e5).toISOString());
 check('a session id from another org -> 404', (await call('GET', '/sessions/ses_gx_other', { token: dana6 })).status, 404);
 
-console.log('\n== M6: DELETE /sessions/:id ==');
+console.log('\n== Sessions: DELETE /sessions/:id ==');
 const stop = (id, token) => call('DELETE', `/sessions/${id}`, { token });
 const own = await stop(sView.body.id, viewer6);
 check('own -> 200 user_stopped', [own.status, own.body?.end_reason], [200, 'user_stopped']);
@@ -447,7 +447,7 @@ const byAdmin = await stop(short.id, await tokOf('admin@acme.test'));
 check('admin -> 200 admin_terminated', [byAdmin.status, byAdmin.body?.end_reason], [200, 'admin_terminated']);
 check('again -> 409', (await stop(short.id, dana6)).status, 409);
 
-console.log('\n== M6: a suspended member is refused, and it is audited ==');
+console.log('\n== Sessions: a suspended member is refused, and it is audited ==');
 check('suspend sam -> 200', (await call('POST', '/orgs/org_acme/members/usr_sam/suspend', { token: dana6 })).status, 200);
 // A token minted after the suspension (current pv), so freshness passes and suspension decides.
 const { perm_version: samPv } = db.prepare("SELECT perm_version FROM memberships WHERE org_id = 'org_acme' AND user_id = 'usr_sam'").get();
@@ -458,14 +458,14 @@ const deny = db.prepare(
   "SELECT action, reason_code FROM audit_events WHERE org_id = 'org_acme' AND actor_id = 'usr_sam' AND result = 'deny' AND reason_code = 'suspended'").get();
 check('  ...audit has the deny row', deny, { action: 'GET /v1/orgs/org_acme/devices', reason_code: 'suspended' });
 
-console.log('\n== M6 fix 1: a device-scoped org:delete row does not lift ==');
+console.log('\n== Sessions fix 1: a device-scoped org:delete row does not lift ==');
 db.prepare(`INSERT INTO grants (id, org_id, user_id, device_id, effect, created_by)
             VALUES ('grt_bad_scope', 'org_acme', 'usr_acme_admin', 'dev_lab_mac_01', 'allow', 'usr_dana')`).run();
 db.prepare("INSERT INTO grant_permissions (grant_id, permission) VALUES ('grt_bad_scope', 'org:delete')").run();
 const eff = await call('GET', '/orgs/org_acme/users/usr_acme_admin/effective', { token: dana6 });
 check("admin's org-level org:delete stays deny", eff.body?.permissions?.['org:delete']?.effect, 'deny');
 
-console.log('\n== M6 fix 2: transfer target needs provision org-wide ==');
+console.log('\n== Sessions fix 2: transfer target needs provision org-wide ==');
 const gxOwner = await tokOf('owner@globex.test');
 check('setup: dana gets device:provision on one Globex device',
   (await call('POST', '/orgs/org_globex/grants', { token: gxOwner,
@@ -474,18 +474,18 @@ check('transfer into Globex -> 403',
   (await call('POST', '/orgs/org_acme/devices/dev_lab_mac_01/transfer', { token: dana6, body: { toOrgId: 'org_globex' } })).status, 403);
 
 // ===========================================================================
-// M8 — hardening. Fresh fixture.
+// Hardening. Fresh fixture.
 await restart(8127);
 const dana8 = await tokOf('dana@example.test');
 const gxOwner8 = await tokOf('owner@globex.test');
 // Real ids, so it is the permission (or the org) that refuses, never a missing row.
-const acmeInvite = (await call('POST', '/orgs/org_acme/invites', { token: dana8, body: { email: 'm8@example.test', role: 'viewer' } })).body.id;
-const gxInvite = (await call('POST', '/orgs/org_globex/invites', { token: gxOwner8, body: { email: 'm8@example.test', role: 'viewer' } })).body.id;
+const acmeInvite = (await call('POST', '/orgs/org_acme/invites', { token: dana8, body: { email: 'hardening@example.test', role: 'viewer' } })).body.id;
+const gxInvite = (await call('POST', '/orgs/org_globex/invites', { token: gxOwner8, body: { email: 'hardening@example.test', role: 'viewer' } })).body.id;
 db.prepare(`INSERT INTO sessions (id, org_id, user_id, device_id, mode, state, authorized_by, expires_at)
             VALUES ('ses_gx_m8', 'org_globex', 'usr_globex_owner', 'dev_globex_desk_01', 'view', 'active', '{}', ?)`)
   .run(new Date(Date.now() + 36e5).toISOString());
 
-console.log('\n== M8: hidden elements are refused by the API (viewer) ==');
+console.log('\n== Hardening: hidden elements are refused by the API (viewer) ==');
 {
   const viewer8 = await tokOf('viewer@acme.test');
   const A = '/orgs/org_acme';
@@ -514,7 +514,7 @@ console.log('\n== M8: hidden elements are refused by the API (viewer) ==');
   }
 }
 
-console.log('\n== M8: cross-org is 404 everywhere ==');
+console.log('\n== Hardening: cross-org is 404 everywhere ==');
 {
   // Every org-scoped route the router knows, so a new route is covered without editing this table.
   const router = createRouter();
@@ -553,7 +553,7 @@ console.log('\n== M8: cross-org is 404 everywhere ==');
   }
 }
 
-console.log('\n== M8: token edge cases ==');
+console.log('\n== Hardening: token edge cases ==');
 {
   const claims = JSON.parse(Buffer.from(dana8.split('.')[1], 'base64url').toString());
   const forge = (c) => signToken(c, SECRET);
@@ -578,7 +578,7 @@ console.log('\n== M8: token edge cases ==');
   check('token for a REMOVED membership (current pv) -> 401', await me(removed), 401);
 }
 
-console.log('\n== M8: malformed input ==');
+console.log('\n== Hardening: malformed input ==');
 {
   const raw = async (method, path, body) => {
     try {
