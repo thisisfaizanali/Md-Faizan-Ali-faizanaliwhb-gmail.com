@@ -16,7 +16,7 @@
     "fingerprint": "node scripts/personalise.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0"
+    "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
