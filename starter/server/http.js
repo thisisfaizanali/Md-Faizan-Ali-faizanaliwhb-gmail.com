@@ -71,17 +71,20 @@ export function readJson(req) {
     let size = 0;
     const chunks = [];
 
+    // Over the limit: answer 400 at once, stop buffering, and let the rest drain.
+    // Destroying the request here resets the socket before the 400 can be read. The drain
+    // is not buffered, and the server's requestTimeout (default 300 s) bounds it.
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > MAX_BODY) {
-        reject(badRequest('request body too large'));
-        req.destroy();
-        return;
+        chunks.length = 0;
+        return reject(badRequest('request body too large'));
       }
       chunks.push(chunk);
     });
 
     req.on('end', () => {
+      if (size > MAX_BODY) return;
       if (size === 0) return resolve({});
       const raw = Buffer.concat(chunks).toString('utf8');
       try {
