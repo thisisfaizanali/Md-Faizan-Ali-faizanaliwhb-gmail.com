@@ -306,3 +306,25 @@ judgement. An unmentioned gap is a gap.
 - **A Windows-friendly `npm start`.** `npm run dev` is the submitted command and runs anywhere.
 - **Rate limiting, email delivery, password reset.** Listed as out of scope in the hand-out;
   invite links are shown once in the UI instead of mailed.
+
+## Citations
+
+**Libraries** — all were already in the hand-out's `package.json`; none added.
+- `better-sqlite3` — the SQLite driver. Its synchronous transactions are what the invite-accept
+  and session-start guarantees stand on. Moved from 11 to 12 in `df50371` for Node 24 prebuilds.
+- `react`, `react-dom` — the console.
+- `vite`, `@vitejs/plugin-react` — dev middleware and the production build.
+- `@playwright/test` — the shipped UI suite; I also used it to time login → shell.
+- `node:crypto` — HMAC, scrypt and `timingSafeEqual`. No JWT or auth library.
+
+**Given by the hand-out, not written by me:** the router, `server/http.js`, `server/db.js`, token
+signing and password hashing in `server/auth.js`, and the scripts under `scripts/` except
+`check-edges.js`. My changes to given files are limited to the ones logged: the two path fixes,
+`db:reset`, the logout route in `PUBLIC_ROUTES`, and the oversized-body fix in `readJson`.
+
+**Tools** — Claude Code (Anthropic), as a pair programmer: implementation and test scaffolding
+against milestone plans I set, reviewing diffs, and drafting prose for this write-up. Direction,
+review and every decision above are mine; the evidence each one cites is a commit or a test run in
+this repository.
+
+No blog posts, tutorials or third-party code snippets were used.
