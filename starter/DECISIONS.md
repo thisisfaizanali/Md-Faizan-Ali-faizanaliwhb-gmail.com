@@ -260,6 +260,16 @@ cannot tell the difference between a decision and an oversight.
   invite, so it cannot see an accept at all. Built against the schema: one conditional `UPDATE`
   with `changes === 1` decides the winner (`server/routes/invites.js`).
 
+- **"Union across all devices" vs a new org.** PERMISSIONS.md §3: org-level is "the union across
+  all devices in the org". `ui.spec.js:270` creates an org with no devices and expects all six
+  cards, because "A brand-new owner holds every permission". A union over zero devices is empty.
+  Built against the test — see the org-level decision above.
+
+- **Invite tokens in URLs.** AUTH-DATA-MODEL.md §6: the raw token is "never in a URL that ends up
+  in a `Referer`". `ui.spec.js:289` opens `/invite/${inviteToken}`. Built against the test and
+  added `<meta name="referrer" content="no-referrer">` to `web/index.html`, so the URL exists but
+  is never sent as a referrer.
+
 ## Deliberately not built
 
 What you chose not to build, and the reason. A scope cut with a stated reason is a senior

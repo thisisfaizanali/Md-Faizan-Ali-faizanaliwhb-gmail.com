@@ -321,6 +321,40 @@ conflict over a device, not a refusal of authority. Reads aren't audited either.
 
 _Where did the server's answer and your instinct disagree about what should be on screen?_
 
+### 2026-09-27 · a stale token would have refreshed me into another org
+
+`/auth/refresh` minted for the earliest-joined org. So a token going stale in Globex (any role or
+grant change bumps pv) would come back scoped to Acme and silently switch the user's org. Refresh
+now takes an optional `{orgId}` and honours it for an active membership (`56cfdba`); the client
+passes the current org when it retries after `TOKEN_STALE`. `check-edges.js` covers both paths.
+
+### 2026-09-27 · one cookie, two refreshes, zero sessions
+
+Rotation plus replay detection means a second refresh with the same cookie revokes the whole
+family. React StrictMode runs effects twice in dev, so a naive boot refresh logs the user out on
+every page load. `web/api.js` keeps one in-flight refresh promise and hands it to every caller
+(`296fb2d`).
+
+### 2026-09-27 · accepting an invite logs you in, and the test says it mustn't
+
+Accept returns a token and sets the refresh cookie. The UI suite expects the login form after
+redeeming. My first cut re-ran the boot refresh when the invite screen cleared — which would have
+used that fresh cookie and landed in the shell. The boot refresh now runs on first mount only, and
+the invite page swaps the URL to `/` and renders the login form directly.
+
+### 2026-09-27 · I specified an inline form; the test drives a prompt
+
+First Playwright run: 23/25. One failure was mine: I told the build to use an inline name form for
+Create organization, having not read `ui.spec.js:270`, which answers `window.prompt` with
+`page.once('dialog', ...)`. The shipped test fixes the mechanism, so create-org uses `prompt`;
+every other confirmation stays inline.
+
+### 2026-09-27 · the UI suite settles the empty-org question
+
+`ui.spec.js:270` creates an org — zero devices — and expects all six cards: "A brand-new owner holds
+every permission". Under the literal "union across all devices", every org-level answer in an empty
+org is deny and none of the six would render. Independent confirmation of the Phase 2 call.
+
 ## Phase 8 — hardening
 
 _What did you measure, what did you fix, and what did you deliberately leave alone? Anything you
