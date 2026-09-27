@@ -11,11 +11,11 @@ import { openDatabase } from '../server/db.js';
 import { createRouter } from '../server/router.js';
 import { registerRoutes } from '../server/routes/index.js';
 import { authenticate } from '../server/context.js';
-import { issueAccessToken } from '../server/auth.js';
+import { issueAccessToken, signToken } from '../server/auth.js';
 
 const DB = join(tmpdir(), 'remoteops-check-edges.db');
 const SECRET = 'test-secret';
-let BASE, server, db;
+let BASE, server, db, serverLog = '';
 
 // Fresh seeded database + server. Sections that need the untouched fixture call it again.
 async function boot(port) {
@@ -23,8 +23,10 @@ async function boot(port) {
   execFileSync(process.execPath, ['scripts/load-db.js'], { env: { ...process.env, DATABASE_FILE: DB }, stdio: 'ignore' });
   server = spawn(process.execPath, ['server/index.js'], {
     env: { ...process.env, DATABASE_FILE: DB, PORT: String(port), NODE_ENV: 'production', JWT_SECRET: SECRET },
-    stdio: ['ignore', 'ignore', 'inherit'],
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
+  // Forwarded, and kept so the whole run can be scanned for unhandled errors at the end.
+  server.stderr.on('data', (chunk) => { serverLog += chunk; process.stderr.write(chunk); });
   await new Promise((r) => setTimeout(r, 1200));
   BASE = `http://localhost:${port}/v1`;
   // Direct access to server state the API does not expose yet (sessions, grants).
@@ -470,6 +472,139 @@ check('setup: dana gets device:provision on one Globex device',
     body: { userId: 'usr_dana', effect: 'allow', permissions: ['device:provision'], deviceId: 'dev_globex_desk_01' } })).status, 201);
 check('transfer into Globex -> 403',
   (await call('POST', '/orgs/org_acme/devices/dev_lab_mac_01/transfer', { token: dana6, body: { toOrgId: 'org_globex' } })).status, 403);
+
+// ===========================================================================
+// M8 — hardening. Fresh fixture.
+await restart(8127);
+const dana8 = await tokOf('dana@example.test');
+const gxOwner8 = await tokOf('owner@globex.test');
+// Real ids, so it is the permission (or the org) that refuses, never a missing row.
+const acmeInvite = (await call('POST', '/orgs/org_acme/invites', { token: dana8, body: { email: 'm8@example.test', role: 'viewer' } })).body.id;
+const gxInvite = (await call('POST', '/orgs/org_globex/invites', { token: gxOwner8, body: { email: 'm8@example.test', role: 'viewer' } })).body.id;
+db.prepare(`INSERT INTO sessions (id, org_id, user_id, device_id, mode, state, authorized_by, expires_at)
+            VALUES ('ses_gx_m8', 'org_globex', 'usr_globex_owner', 'dev_globex_desk_01', 'view', 'active', '{}', ?)`)
+  .run(new Date(Date.now() + 36e5).toISOString());
+
+console.log('\n== M8: hidden elements are refused by the API (viewer) ==');
+{
+  const viewer8 = await tokOf('viewer@acme.test');
+  const A = '/orgs/org_acme';
+  const table = [
+    ['POST', `${A}/devices`, { name: 'v-02', kind: 'linux' }],
+    ['PATCH', `${A}/devices/dev_lab_mac_01`, { name: 'renamed' }],
+    ['DELETE', `${A}/devices/dev_lab_mac_01`],
+    ['POST', `${A}/devices/dev_lab_mac_01/transfer`, { toOrgId: 'org_globex' }],
+    ['POST', `${A}/grants`, { userId: 'usr_sam', effect: 'allow', permissions: ['device:view'] }],
+    ['DELETE', `${A}/grants/grt_sam_deny_terminal_orgwide`],
+    ['POST', `${A}/invites`, { email: 'v@example.test', role: 'viewer' }],
+    ['GET', `${A}/invites`],
+    ['DELETE', `${A}/invites/${acmeInvite}`],
+    ['PATCH', `${A}/members/usr_sam`, { role: 'viewer' }],
+    ['POST', `${A}/members/usr_sam/suspend`],
+    ['DELETE', `${A}/members/usr_sam/suspend`],
+    ['DELETE', `${A}/members/usr_sam`],
+    ['PATCH', A, { name: 'Pwned' }],
+    ['DELETE', A],
+    ['GET', `${A}/audit`],
+    ['POST', `${A}/sessions`, { deviceId: 'dev_lab_mac_01', mode: 'control' }],
+  ];
+  for (const [method, path, body] of table) {
+    const r = await call(method, path, { token: viewer8, body });
+    check(`${method} ${path.replace(A, '')} -> 403 with reason`, [r.status, typeof r.body?.error?.reason], [403, 'string']);
+  }
+}
+
+console.log('\n== M8: cross-org is 404 everywhere ==');
+{
+  // Every org-scoped route the router knows, so a new route is covered without editing this table.
+  const router = createRouter();
+  registerRoutes(router, { db, secret: SECRET });
+  const ids = { devices: 'dev_globex_desk_01', grants: 'grt_dana_control_one_device', invites: gxInvite,
+    members: 'usr_globex_owner', users: 'usr_globex_owner' };
+  const nope = withoutRequestId((await call('GET', '/orgs/org_nope/devices', { token: dana8 })).body);
+  const orgRoutes = router.routes.filter((r) => r.segments[2] === ':org');
+  for (const { method, segments } of orgRoutes) {
+    const path = '/' + segments.slice(1).map((s, i, a) =>
+      s === ':org' ? 'org_globex' : s.startsWith(':') ? ids[a[i - 1]] : s).join('/');
+    const r = await call(method, path, { token: dana8, body: method === 'GET' || method === 'DELETE' ? undefined : {} });
+    check(`${method} ${path} -> 404, same body`, [r.status, withoutRequestId(r.body)], [404, nope]);
+  }
+  check(`  ...the table is the router's (${orgRoutes.length} org-scoped routes)`, orgRoutes.length >= 24, true);
+
+  const A = '/orgs/org_acme';
+  const byId = [
+    ['GET', `${A}/devices/dev_globex_desk_01`],
+    ['PATCH', `${A}/devices/dev_globex_desk_01`, { name: 'x' }],
+    ['DELETE', `${A}/devices/dev_globex_desk_01`],
+    ['POST', `${A}/devices/dev_globex_desk_01/transfer`, { toOrgId: 'org_globex' }],
+    ['DELETE', `${A}/grants/grt_dana_control_one_device`],
+    ['DELETE', `${A}/invites/${gxInvite}`],
+    ['PATCH', `${A}/members/usr_globex_owner`, { role: 'viewer' }],
+    ['POST', `${A}/members/usr_globex_owner/suspend`],
+    ['DELETE', `${A}/members/usr_globex_owner/suspend`],
+    ['DELETE', `${A}/members/usr_globex_owner`],
+    ['GET', `${A}/users/usr_globex_owner/effective`],
+    ['GET', '/sessions/ses_gx_m8'],
+    ['DELETE', '/sessions/ses_gx_m8'],
+  ];
+  for (const [method, path, body] of byId) {
+    const r = await call(method, path, { token: dana8, body });
+    check(`Globex id: ${method} ${path.replace(A, '')} -> 404`, [r.status, withoutRequestId(r.body)], [404, nope]);
+  }
+}
+
+console.log('\n== M8: token edge cases ==');
+{
+  const claims = JSON.parse(Buffer.from(dana8.split('.')[1], 'base64url').toString());
+  const forge = (c) => signToken(c, SECRET);
+  const me = async (token) => (await call('GET', '/auth/me', { token })).status;
+  check('control: re-signed real claims -> 200', await me(forge(claims)), 200);
+  for (const [label, token] of [
+    ['payload null', forge(null)],
+    ['payload []', forge([])],
+    ['payload "x"', forge('x')],
+    ['aud ["remoteops-api"]', forge({ ...claims, aud: ['remoteops-api'] })],
+    ['jti 123', forge({ ...claims, jti: 123 })],
+    ['exp true', forge({ ...claims, exp: true })],
+    ['expired exp', forge({ ...claims, exp: Math.floor(Date.now() / 1000) - 1 })],
+  ]) check(`${label} -> 401`, await me(token), 401);
+
+  const d = await login('dana@example.test');
+  check('refresh token as Bearer -> 401', await me(cookieOf(d).slice('rt='.length)), 401);
+
+  check('setup: remove admin', (await call('DELETE', '/orgs/org_acme/members/usr_acme_admin', { token: dana8 })).status, 204);
+  const { perm_version: pv } = db.prepare("SELECT perm_version FROM memberships WHERE org_id = 'org_acme' AND user_id = 'usr_acme_admin'").get();
+  const removed = issueAccessToken({ userId: 'usr_acme_admin', orgId: 'org_acme', role: 'admin', permVersion: pv }, SECRET);
+  check('token for a REMOVED membership (current pv) -> 401', await me(removed), 401);
+}
+
+console.log('\n== M8: malformed input ==');
+{
+  const raw = async (method, path, body) => {
+    try {
+      const res = await fetch(BASE + path, { method, body,
+        headers: { authorization: `Bearer ${dana8}`, 'content-type': 'application/json' } });
+      return res.status;
+    } catch (err) {
+      return `network error: ${err.cause?.code ?? err.message}`;
+    }
+  };
+  const P = '/orgs/org_acme/devices/dev_lab_mac_01';
+  check('body is an array -> 400', await raw('PATCH', P, '[{"name":"x"}]'), 400);
+  check('invalid JSON -> 400', await raw('PATCH', P, '{"name":'), 400);
+  check('1.1 MB body -> 400', await raw('PATCH', P, JSON.stringify({ name: 'x'.repeat(1_100_000) })), 400);
+  check('  ...and the server still answers', await raw('PATCH', P, '{"name":"lab-mac-01"}'), 200);
+  check('PATCH device {name: 123} -> 400', (await call('PATCH', P, { token: dana8, body: { name: 123 } })).status, 400);
+  check('POST grants permissions as a string -> 400',
+    (await call('POST', '/orgs/org_acme/grants', { token: dana8,
+      body: { userId: 'usr_sam', effect: 'allow', permissions: 'device:view' } })).status, 400);
+  const noDevice = (await call('POST', '/orgs/org_acme/sessions', { token: dana8, body: { mode: 'view' } })).status;
+  check('POST sessions without deviceId -> 400 or 404', [400, 404].includes(noDevice), true);
+}
+
+// Give stderr a moment to drain, then scan everything the servers logged this run.
+await new Promise((r) => setTimeout(r, 200));
+check('server log: zero "unhandled" across the run', (serverLog.match(/unhandled/g) ?? []).length, 0);
 
 console.log(`\n${fail === 0 ? 'ALL PASS' : 'FAILURES'} — ${pass} passed, ${fail} failed\n`);
 db.close();
