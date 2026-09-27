@@ -267,9 +267,55 @@ Counted in-process through a wrapped `db`: 3 for the `device:list` check, 1 for 
 _Two permissions, one device. What did you have to resolve, and in what order, to keep the two
 failure reasons distinguishable?_
 
+### 2026-09-27 · an expired control session still holds the device
+
+`one_exclusive_session_per_device` is `WHERE state = 'active' AND mode IN ('control','terminal')`.
+Nothing ends a session when its `expires_at` passes, so an expired control session would keep the
+device `DEVICE_BUSY` forever — the same shape as the invite index. `sweepExpired` ends it with
+`session_expired` inside the same transaction as the next insert, and before every session read
+(`03e9fd4`, `4f55876`). `check-edges.js`: backdate a held session's expiry, start control → `201`,
+and the old one reads `ended` / `session_expired`.
+
+### 2026-09-27 · order of the compound check
+
+`session:start` first, then the mode permission, both on the same device. The first missing one
+decides the reason: `missing_permission` or `missing_device_permission`. Checking the mode
+permission first would report `missing_device_permission` for a viewer on qa-android-01, who
+lacks both — true, but it hides that they can't open sessions there at all. `check-api.js` §9
+pins it: qa-android-01 → `missing_permission`, lab-mac-01 control → `missing_device_permission`.
+
+### 2026-09-27 · the race is a unique index, not a check
+
+`POST /sessions` never looks for an existing holder before inserting. It inserts and maps
+`SQLITE_CONSTRAINT_UNIQUE` to `409 DEVICE_BUSY`, then looks up the holder for the message.
+`check-edges.js` fires two control starts with `Promise.all`: one `201`, one `409`. First full
+`check-api.js` run: 66/66.
+
+### 2026-09-27 · proved the engine fix against the old code
+
+Re-ran the scratch-database probe from Phase 4 on `6ed9886`. Same data — admin with a device-scoped
+`org:delete` grant. Before: org-level `{"effect":"allow","source":"grant:g"}`. After:
+`{"effect":"deny","source":null,"reason":"implicit"}`. On that one device it still resolves
+`allow`, which is inert: every route checks `org:delete` at org level.
+
 ## Phase 6 — audit
 
 _What did you decide counts as an auditable event, and what pushed you to that line?_
+
+### 2026-09-27 · the one denial the wrapper couldn't see
+
+Every handler is wrapped once so a `403` is written as a deny row (`41decaf`). A suspended member
+is refused in `authenticate()`, before any handler runs, so those refusals never reached the
+wrapper — a suspended person could probe every route and leave no trace. `context.js` now writes
+that row itself (`03e9fd4`), with `request_id` null because `authenticate()` is never given it.
+`check-edges.js`: suspend, fresh token, any request → `403`, and a deny row with `suspended`.
+
+### 2026-09-27 · where I drew the line
+
+Audited: every successful mutation (one row, in the same transaction as the write) and every
+`403`, with the engine's reason. Not audited: `404`s — writing "someone probed org B" into org B's
+log would tell B's auditors about a user who isn't theirs — and `409 DEVICE_BUSY`, which is a
+conflict over a device, not a refusal of authority. Reads aren't audited either.
 
 ## Phase 7 — the console
 

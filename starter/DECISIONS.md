@@ -163,6 +163,24 @@ which would need a schema change I'm not allowed to make.
 
 ---
 
+### Expired sessions end lazily, inside the transaction that needs the device
+
+**What I chose:** no timer. `sweepExpired` ends active sessions whose `expires_at <= now` as
+`session_expired` inside the session-start transaction, and before any session read
+(`server/lifecycle.js`, `03e9fd4`).
+**Why:** `one_exclusive_session_per_device` only knows `state`, so an expired-but-active control
+session blocks its device until something ends it (BUILD-LOG, Phase 5). Sweeping in the insert's
+transaction means the index sees the truth at exactly the moment it decides.
+**What I rejected:** a `setInterval` sweeper. Between ticks, an expired session still blocks the
+device and still reads `active` — wrong for up to one interval. It also needs lifecycle handling
+the one-process server doesn't have. Also rejected: comparing `expires_at` in the start handler
+without ending the row; the index would still refuse the insert.
+**What would change my mind:** a requirement that `session_expired` is recorded at the moment of
+expiry for reporting. Reads here always sweep first, so nothing sees a stale state, but
+`ended_at` is when it was noticed, not when it lapsed.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
