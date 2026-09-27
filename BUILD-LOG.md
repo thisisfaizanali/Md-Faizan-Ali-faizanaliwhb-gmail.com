@@ -378,7 +378,71 @@ to `{ ok, value }` before the first build.
 _What did you measure, what did you fix, and what did you deliberately leave alone? Anything you
 chose not to build belongs here with its reason._
 
+### 2026-09-27 · graded with a nonce I've never seen
+
+Grading swaps the personalised role and permission. Ran `check-personalisation.js` under
+`CANDIDATE_NONCE=grade-a`, `grade-b`, `grade-c`: 18/18 each. Then `check-api.js` (66/66) and the
+UI suite (25/25) on a database loaded under `grade-a` — checked that `e2e.db` held that overlay's
+user (`usr_p_ca62dd`), not my file nonce's (`usr_p_bb3398`).
+
+### 2026-09-27 · a 1.1 MB body reset the connection instead of answering 400
+
+Expected `400`. Got `ECONNRESET`: `readJson` called `req.destroy()` on the oversized body, which
+killed the socket before the `400` went out — the client saw a dead server, not a refusal. Now it
+rejects at once, stops buffering, and lets the rest drain (`487c66a`); `check-edges.js` confirms
+the `400` and that the server still answers afterwards. The drain is bounded only by Node's
+300 s `requestTimeout`.
+
+### 2026-09-27 · the native module and a Node upgrade underneath me
+
+Mid-run the machine was down to Node 24 only. better-sqlite3 11.10 has no Node 24 prebuilt;
+`npm rebuild` fell back to compiling, failed without Visual Studio, and deleted the old binary —
+`ERR_DLOPEN_FAILED`. Moved to `better-sqlite3@^12` (`df50371`), which ships prebuilts for it. No
+code change. A fresh `npm ci` on Node 24 would have failed the same way for anyone.
+
+### 2026-09-27 · every hidden entry is refused, every other org is 404
+
+Table-driven in `check-edges.js` (`025b83f`): the viewer hits the 17 endpoints behind entries the
+UI hides from them — each `403` with a reason, using real ids so it's the permission refusing, not
+a `404`. Dana's Acme token against all 24 `/orgs/org_globex/...` routes — list built from the
+router, so new routes are covered automatically — each `404`, bodies identical to a non-existent
+org's once `requestId` is removed. 13 more with a Globex id under an Acme path. The server log
+held zero `unhandled` errors across the whole run.
+
+### 2026-09-27 · what it costs
+
+Medians of 20 unless noted:
+- `GET /devices`: 8 statements and 1.55 ms at 5 devices; 8 statements and 10.18 ms at 500.
+- `GET /auth/me`: 7 statements (authentication included), 0.88 ms.
+- `POST /auth/token`: 1.24 ms. `POST /auth/login`: 35.96 ms — that's scrypt, on purpose.
+- Login submit → app shell visible in Chromium: 124 ms (median of 5).
+Statement counts don't move with device count, so there was nothing a cache would buy.
+
+### 2026-09-27 · a clean clone
+
+Cloned HEAD to a temp dir: `npm ci`, `db:reset`, `build` fine. `npm start` fails on Windows —
+`NODE_ENV=production node ...` isn't cmd syntax. Left the script alone: the submitted command is
+`npm run dev`, which has no env syntax, and the graders' machine is unknown either way.
+
 ## Open threads
 
 _Things you know are wrong, unfinished, or that you would do differently with another day. Listing
 these honestly is worth more than pretending they do not exist — we will find them anyway._
+
+- **Two tabs, one cookie.** The single-flight refresh is per tab. If two tabs go stale at once and
+  both refresh with the same cookie, the second is a replay and revokes the family — both tabs
+  are signed out on their next refresh. By construction; not reproduced.
+- **A user removed from every org is locked out.** Login answers `403 no_active_membership`, and
+  creating an org needs a token, which needs a membership. They can only come back by invite.
+- **Reload always lands on the earliest-joined org.** The active org lives in memory; after a
+  reload the refresh has no `orgId` to ask for.
+- **Unknown routes answer 404 before 401.** An anonymous caller can tell registered routes from
+  unregistered ones. `server/index.js` matches before it authenticates.
+- **The suspended-refusal audit row has no `request_id`.** `authenticate()` isn't given it.
+- **`DELETE` on a session that expired unnoticed says "already ended" (`409`),** because the sweep
+  ends it as `session_expired` first. The user can't record `user_stopped` on it.
+- **Reading one session checks `session:view` at org level,** not on the session's device.
+- **An oversized body is drained, not cut off,** so a client can hold a socket for up to Node's
+  300 s `requestTimeout`.
+- **Organization names aren't unique.** The error table lists `409` for a duplicate name; I apply
+  it to device names within an org and let two orgs share a name.

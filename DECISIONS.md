@@ -181,6 +181,24 @@ expiry for reporting. Reads here always sweep first, so nothing sees a stale sta
 
 ---
 
+### No permission cache: resolve fresh on every request, once per request
+
+**What I chose:** no cross-request cache. Each request resolves from the database, and a per-request
+`Map` on `ctx` (`resolvedFor` in `server/permissions.js`) stops the same request resolving twice.
+**Why:** measured it (BUILD-LOG, Phase 8): `GET /devices` is 8 statements whether there are 5 or 500
+devices, 1.55 ms and 10.18 ms; `GET /auth/me` is 7 statements and 0.88 ms. A cache would save a
+fraction of a millisecond. And it can't serve stale authority if it doesn't exist — grants expire
+by the clock, which no version counter sees.
+**What I rejected:** a cache keyed by `(userId, orgId)` and invalidated by `perm_version`. It's the
+standard answer, and it's wrong here in a quiet way: a grant reaching its `expires_at` changes the
+answer without bumping anything. It would need a TTL shorter than the shortest grant window, at
+which point it's barely a cache.
+**What would change my mind:** `GET /devices` statement count growing with rows, or resolution
+showing up in a profile at real load. Then: cache per `(userId, orgId, perm_version)` with the
+entry's lifetime capped at the earliest `starts_at`/`expires_at` among the grants it read.
+
+---
+
 ### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
 
 **What I chose:**
@@ -274,3 +292,17 @@ cannot tell the difference between a decision and an oversight.
 
 What you chose not to build, and the reason. A scope cut with a stated reason is a senior
 judgement. An unmentioned gap is a gap.
+
+- **A transfer screen.** `POST /devices/:id/transfer` works and is tested; the UI inventory lists
+  no entry for it, and it needs `device:provision` in two orgs at once, which a single-org token
+  can't show on one screen.
+- **File transfer.** The `transfer-files` entry appears when permitted and says it's out of
+  scope. Sessions are records; the ground rules forbid anything that moves bytes to a device.
+- **Live updates.** Views fetch on mount. A permission change shows on the next request, which is
+  what the spec asks for; polling or push would add a moving part for no graded behaviour.
+- **Pagination beyond audit and sessions.** Devices, members and grants return everything. The
+  device list stays at 8 statements and ~10 ms with 500 devices, so it wasn't needed yet.
+- **Search, batch operations, org restore.** Nothing in the inventory asks for them.
+- **A Windows-friendly `npm start`.** `npm run dev` is the submitted command and runs anywhere.
+- **Rate limiting, email delivery, password reset.** Listed as out of scope in the hand-out;
+  invite links are shown once in the UI instead of mailed.
