@@ -8,6 +8,7 @@ import {
   newRefreshToken, hashRefreshToken, REFRESH_TTL_SECONDS,
 } from '../auth.js';
 import { resolve } from '../permissions.js';
+import { assignableRoles } from '../lifecycle.js';
 
 // Unknown emails still pay for one scrypt, so response time doesn't reveal the account.
 const DUMMY_HASH = hashPassword(randomUUID());
@@ -53,6 +54,7 @@ function authShape(db, userId, orgId) {
     role: cur.role,
     orgs: orgs.map((o) => ({ id: o.org_id, name: o.name, theme: o.theme, role: o.role })),
     permissions: resolve(db, { userId, orgId }).permissions,
+    assignableRoles: assignableRoles(db, cur.role),
   };
 }
 

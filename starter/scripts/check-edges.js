@@ -87,7 +87,7 @@ check('refresh cookie attributes',
 const c1 = cookieOf(dana);
 const r1 = await call('POST', '/auth/refresh', { cookie: c1 });
 check('refresh -> 200', r1.status, 200);
-check('  ...returns the login shape', Object.keys(r1.body ?? {}).sort(), ['org', 'orgs', 'permissions', 'role', 'token', 'user']);
+check('  ...returns the login shape', Object.keys(r1.body ?? {}).sort(), ['assignableRoles', 'org', 'orgs', 'permissions', 'role', 'token', 'user']);
 const c2 = cookieOf(r1);
 check('  ...rotates the cookie', c2 !== null && c2 !== c1, true);
 check('old cookie replayed -> 401', (await call('POST', '/auth/refresh', { cookie: c1 })).status, 401);
@@ -112,6 +112,16 @@ const danaTok = dana.body.token;
 check('token for an org with no membership -> 404', (await call('POST', '/auth/token', { token: danaTok, body: { orgId: 'org_nope' } })).status, 404);
 const me = await call('GET', '/auth/me', { token: danaTok });
 check('GET /auth/me -> 200, org Acme', [me.status, me.body?.org?.id], [200, 'org_acme']);
+
+console.log('\n== assignableRoles in the auth shape ==');
+// Read from the roles table, so the personalised (undocumented) role is included.
+const allRoles = db.prepare('SELECT key FROM roles ORDER BY key').all().map((r) => r.key);
+check('owner may assign every role in the table', me.body.assignableRoles.map((r) => r.key).sort(), allRoles);
+const adminShape = (await login('admin@acme.test')).body;
+const adminRank = db.prepare("SELECT rank FROM roles WHERE key = 'admin'").get().rank;
+check('admin gets no owner, nothing above admin',
+  adminShape.assignableRoles.map((r) => r.key).sort(),
+  db.prepare("SELECT key FROM roles WHERE rank <= ? AND key <> 'owner' ORDER BY key").all(adminRank).map((r) => r.key));
 
 console.log('\n== D8 modification authority ==');
 check('self role change -> SELF_ROLE_CHANGE',

@@ -49,8 +49,17 @@ export function assertCanModify(db, ctx, target, newRole) {
 export function assertCanAssign(db, ctx, role) {
   assertRoleExists(db, role);
   if (role === OWNER && ctx.role !== OWNER) throw forbidden('only an owner can confer owner', 'rank');
-  const ranks = roleRanks(db);
-  if (ranks[role] > ranks[ctx.role]) throw forbidden('you cannot assign a role above your own', 'rank');
+  if (!mayAssign(roleRanks(db), ctx.role, role)) throw forbidden('you cannot assign a role above your own', 'rank');
+}
+
+const mayAssign = (ranks, callerRole, role) =>
+  (role !== OWNER || callerRole === OWNER) && ranks[role] <= ranks[callerRole];
+
+// The same rule as a list, for the console: it must never know role names or ranks itself.
+export function assignableRoles(db, callerRole) {
+  const roles = db.prepare('SELECT key, rank, label FROM roles ORDER BY rank DESC').all();
+  const ranks = Object.fromEntries(roles.map((r) => [r.key, r.rank]));
+  return roles.filter((r) => mayAssign(ranks, callerRole, r.key)).map(({ key, label }) => ({ key, label }));
 }
 
 // Call inside the same transaction as the write that takes `userId` out of (active AND owner).
