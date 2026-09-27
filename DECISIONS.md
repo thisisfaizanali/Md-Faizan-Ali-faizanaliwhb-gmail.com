@@ -320,7 +320,8 @@ judgement. An unmentioned gap is a gap.
 **Given by the hand-out, not written by me:** the router, `server/http.js`, `server/db.js`, token
 signing and password hashing in `server/auth.js`, and the scripts under `scripts/` except
 `check-edges.js`. My changes to given files are limited to the ones logged: the two path fixes,
-`db:reset`, the logout route in `PUBLIC_ROUTES`, and the oversized-body fix in `readJson`.
+`db:reset`, the better-sqlite3 bump, the logout route in `PUBLIC_ROUTES`, the oversized-body fix in
+`readJson`, and the no-referrer meta tag in `web/index.html`.
 
 **Tools** — Claude Code (Anthropic), as a pair programmer: implementation and test scaffolding
 against milestone plans I set, reviewing diffs, and drafting prose for this write-up. Direction,
