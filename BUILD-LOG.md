@@ -424,6 +424,14 @@ Cloned HEAD to a temp dir: `npm ci`, `db:reset`, `build` fine. `npm start` fails
 `NODE_ENV=production node ...` isn't cmd syntax. Left the script alone: the submitted command is
 `npm run dev`, which has no env syntax, and the graders' machine is unknown either way.
 
+### 2026-09-27 · by hand, in the browser
+
+Walked the console by hand on `npm run dev` with a fresh `db:reset`: sign-in failures, Sam's two
+orgs, the viewer's missing kiosk row, creating an org, a grant making Terminal appear for another
+user in a separate window, a busy device, a demotion that leaves a running session alone, a
+suspension that ends it, an invite redeemed, a reload, the audit log, and the server stopped
+mid-session. Nothing surprised me.
+
 ## Open threads
 
 _Things you know are wrong, unfinished, or that you would do differently with another day. Listing
